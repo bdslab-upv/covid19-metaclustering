@@ -1,0 +1,849 @@
+---
+title: "COVID-19 subgroup discovery among age-gender groups through a meta-clustering technique on the Mexican Government dataset"
+output: 
+  html_document:
+    toc: true # table of content true
+    toc_depth: 3  # upto three depths of headings (specified by #, ## and ###)
+    toc_float: yes
+    code_folding: show
+    number_sections: true  ## if you want number sections at each table header
+    theme: united  # many options for theme, this one is my favorite.
+    highlight: tango  # specifies the syntax highlighting style
+author: |
+        | Lexin Zhou^1^,  Nekane Romero^1^, Juan Martínez-Miranda^3^, J Alberto Conejero^2^, Juan M García-Gómez^1^, Carlos Sáez^1^
+        | 
+        | ^1^Biomedical Data Science Lab, Instituto Universitario de Tecnologías de la Información y Comunicaciones (ITACA), Universitat Politècnica de València (UPV), Camino de Vera s/n, Valencia 46022, España. ^2^Instituto Universitario de Matemática Pura y Aplicada (IUMPA), Universitat Politécnica de València, Valencia, Spain. ^3^CONACyT - Centro de Investigación Científica y de Educación Superior de Ensenada - CICESE-UT3, Mexico.
+        | Corresponding authors: Lexin Zhou <lexinzhouds@gmail.com> and Carlos Sáez <carsaesi@upv.es>
+date: "February 14, 2021"
+---
+
+# Introduction
+
+This document reports the code for discovering COVID-19 meta-subgroups by comorbidities and habits, evaluated on the [Mexican Government dataset](https://www.gob.mx/salud/documentos/datos-abiertos-152127) published by the Mexican government. This document, as well as the supporting functions required for its execution, are available in the [COVID-19 Metaclustering](https://github.com/bdslab-upv/covid19-metaclustering) GitHub repository.
+
+The COVID-19 infectious disease has led since December 2019 to a global pandemic that remains under control measures. Researchers around the world are making great efforts for a comprehensive understanding of COVID-19 from various data sources and modalities, with the goal of improving prognosis and treatments. 
+
+This work shows the results of a two-stage unsupervised Machine Learning (ML) approach, namely meta-clustering, to identify potential subphenotypes of COVID-19 patients from clinical phenotypes and demographic features. Stratification on gender and age groups was included to reduce potential confounding factors since age and gender are highly correlated with comorbidity, habits and mortality. It is worth noting that although our meta-clustering approach in this tutorial is based on age-gender stratification, in real-world there are other intriguing variable combinations that we may be interested in that can also be replicated using this code with subtle changes. For example, considering the socioeconomic level of the city where the patients live, or separating rural and non-rural areas to obtain two different sets of clusters (rural clusters and non-rural clusters) since the socioeconomic level of the city affects the amount of resources that are available for patients and thereby affecting the outcome of patients.
+
+This work is part of the [COVID-19 Subgroup Discovery and Exploration Tool (COVID-19 SDE Tool)](http://covid19sdetool.upv.es/) project from the [Biomedical Data Science Lab](http://bdslab.upv.es/) of the Universitat Politècnica de València, Spain.
+
+We analyzed the COVID-19 [open data from the Mexican Government](https://www.gob.mx/salud/documentos/datos-abiertos-152127) that is released on 2020-11-02. After processing the data with proper inclusion criteria, the final sample comprises patient-level epidemiological and clinical data from 778 692 SARS-CoV-2 patients from January 13, 2020, to September 30, 2020. The methods for the dataset preprocessing is described in *CovMexico_Data_Preprocessing.ipynb* in our [COVID-19 Metaclustering](https://github.com/bdslab-upv/covid19-metaclustering) GitHub repository as well.
+
+Inter-patient variability was analyzed by combining dimensionality reduction and hierarchical clustering methods. We produced cluster analyses for all combinations of gender and age groups (<18, 18-49, 50-64, and >64). For each group, the optimum number of clusters in this work were selected combining a quantitative approach using Silhouette coefficient, and a qualitative method through a subgroup expert inspection via visual analytics. Using the features of the resultant age-gender clusters, we performed a meta-clustering analysis to provide an overall description of the population.
+
+In this tutorial, we found 56 age-gender specific clusters with a Multiple Correspondence Analysis 3-dimensional and a hierarchical clustering. Afterwards, we applied PCA with these age-gender clusters and then used the first 3 Principal Components as input to apply meta-clustering. Finally, we found eleven meta-clusters that provide bases to comprehend classification of patients with COVID-19 based on comorbidities, habits, demographic characteristics, geographic data and type of clinical institutions, as well as revealing the correlations between the above characteristics thereby help to anticipate the possible clinical outcomes for every specifically characterized patient. These subphenotypes can establish target groups for automated stratification or triage systems to provide personalized therapies or treatments. 
+
+All the codes can be replicated easily and adapted on many different kinds of datasets such as patient-level or individual-level dataset.
+
+If you use this code please cite:
+
+<blockquote style='font-size:14px'>Lexin Zhou, Nekane Romero, Juan Martínez-Miranda, J Alberto Conejero, Juan M García-Gómez, Carlos Sáez. Heterogeneity in COVID-19 severity patterns among age-gender groups: an analysis of 778 692 Mexican patients through a meta-clustering technique. Preprint submitted to medRxiv. </blockquote>
+
+
+If you are interested in collaborating in this work please [contact us](mailto:carsaesi@upv.es).
+
+For further exploration of the results, please visit our [COVID-19 Subgroup Discovery and Exploration Tool (COVID-19 SDE Tool)](http://covid19sdetool.upv.es/). For more practical examples, you may also be interested in our preceding work about [COVID-19 subgroup discovery tool, application to the nCov2019 datase](https://academic.oup.com/jamia/article/28/2/360/5919075) whose methodology is well described in another GitHub repository [COVID-19-SDE-Tool](https://github.com/carsaesi/covid19sdtool).
+
+# Setup
+
+Install and load the required packages
+
+```{r setup, eval=TRUE, message=FALSE, warning=FALSE}
+# the function p_load() from pacman package checks to see if a package is installed, if not it attempts to install the package and then loads it
+# By this way, we simplify the notebook's structure
+# install.packages("pacman")   
+library(pacman)
+pacman::p_load(writexl, ggplot2, ggfortify, text2vec, plotly, factoextra, dplyr, stringr, kableExtra, MVN, lsa, Rtsne, FactoMineR, ape, RColorBrewer, survival, survminer, varhandle, glue, cluster, fastcluster, graphics, clusterCrit, ComplexHeatmap, reshape, pheatmap)
+```
+
+
+Source the required functions. These can be found at the [COVID-19 Metaclustering](https://github.com/bdslab-upv/covid19-metaclustering) GitHub repository. We recommended to download the whole repository, which includes this document `.Rmd` file.
+
+```{r, functions, eval=TRUE, message=FALSE, warning=FALSE}
+source('./R/pCI.R')
+source('./R/mCI.R')
+source('./R/Prop.R')
+source('./R/Mean.R')
+```
+
+# Data loading
+
+Load the nCov2019 dataset at 2020-11-02.
+
+```{r dataLoad, eval=TRUE, message=FALSE, warning=FALSE}
+### LOAD AND FORMAT DATASET 
+untar('./data/COVID19_MEXICO_LATEST_DATA.tar.gz', exdir = "data")
+data = read.csv2("./data/COVID19_MEXICO_LATEST_DATA.csv", encoding="UTF-8", sep = ",", header = TRUE, na.strings = "", stringsAsFactors = FALSE,dec=".",
+                 colClasses = c( "numeric",   #Index of row
+                                 "Date",      #LAST_UPDATE
+                                 "character", #ID_REGISTRATION
+                                 "factor",    #ORIGIN
+                                 "factor",    #SECTOR
+                                 "character", #ENTITY_UM
+                                 "factor",    #SEX
+                                 "character", #ENTITY_NAT
+                                 "character", #ENTITY_RES
+                                 "character", #MUNICIPALITY_RES
+                                 "factor",    #PATIENT_TYPE
+                                 "Date",      #ADMISSION_DATE
+                                 "Date",      #SYMPTOMS_DATE
+                                 "Date",      #DEATH_DATE
+                                 "numeric",   #INTUBATED
+                                 "numeric",   #PNEUMONIA
+                                 "numeric",   #AGE
+                                 "character", #NATIONALITY
+                                 "numeric",   #PREGNANT
+                                 "numeric",   #SPEAK_INDIGENOUS_LANGUAGE
+                                 "numeric",   #Indigenous
+                                 "numeric",   #DIABETES
+                                 "numeric",   #COPD
+                                 "numeric",   #ASTHMA
+                                 "numeric",   #INMUSUPR
+                                 "numeric",   #HYPERTENSION
+                                 "numeric",   #OTHER_DISEASE
+                                 "numeric",   #CARDIOVASCULAR
+                                 "numeric",   #OBESITY 
+                                 "numeric",   #CHRONIC_KIDNEY_DISEASE
+                                 "numeric",   #SMOKE
+                                 "factor",    #OTHER_CASE_CONTACT
+                                 "factor",    #TESTED
+                                 "factor",    #RESULT_LAB
+                                 "factor",    #FINAL_CLASIFICATION
+                                 "factor",    #MIGRANT
+                                 "character", #COUNTRY_NATIONALITY
+                                 "character", #COUNTRY_ORIGIN
+                                 "factor",    #UCI
+                                 "factor",    #OUTCOME ('See the Python notebook')
+                                 "numeric",   #Survival_days ('See the Python notebook')
+                                 "character"  #From_symptoms_to_hospital_days ('See the Python notebook')
+                 ))  
+
+```
+
+# Data preparation
+## Convert and derive variables.
+```{r dataVariableConversion, eval=TRUE, message=FALSE, warning=FALSE}
+# Select only positive patients
+data = data[data$RESULT_LAB == 'Positive SARS-CoV-2', ]
+# data = data[data$RESULT_LAB == 'Non-Positive SARS-CoV-2', ]
+
+# convert some variable types
+data$ageNum = as.numeric(data$AGE)
+data$Survival_days = as.numeric(data$Survival_days)
+data$FromSymptomToHospital_days = as.numeric(data$FromSymptomToHospital_days)
+data$ageCat = vector(mode = "character", length = nrow(data))
+names(data)[names(data) == "UCI"] <- "ICU" # Translate UCI (Spanish) to ICU (Intensive Care Unit)
+
+# make age groups <17, 18-49, 50-64, >65
+idsLeq17  = data$ageNum <= 17
+ids18to49 = data$ageNum > 17 & data$ageNum <= 49
+ids50to64 = data$ageNum > 49 & data$ageNum <= 64
+idsGeq65  = data$ageNum > 64
+data$ageCat[idsLeq17] = '<18'
+data$ageCat[ids18to49] = '18-49'
+data$ageCat[ids50to64] = '50-64'
+data$ageCat[idsGeq65] = '>64'
+
+# Manually fix variable types
+data$ADMISSION_DATE = as.Date(data$ADMISSION_DATE)
+data$LAST_UPDATE = as.Date(data$LAST_UPDATE)
+data$SYMPTOMS_DATE = as.Date(data$SYMPTOMS_DATE)
+data$DEATH_DATE = as.Date(data$DEATH_DATE)
+
+# remove rows with missing Admission dates and remove index column
+data = data[!is.na(data$ADMISSION_DATE),-1]
+
+# remove rows: LAST_UPDATE and ID_REGISTRATION due to their irrelevance
+data = subset(data, select = -c(LAST_UPDATE, ID_REGISTRATION))
+
+# Create new columns for categorizing survival days
+data$'Survival>15days' <- ifelse(data$Survival_days>15, 1, 0)
+data$'Survival>30days' <- ifelse(data$Survival_days>30, 1, 0)
+
+data$'Survival>15days'[is.na(data$'Survival>15days')]<-1 # Fill nan-value
+data$'Survival>30days'[is.na(data$'Survival>30days')]<-1
+
+data_outcome = data[which(!is.na(data$OUTCOME)),]
+
+data_outcome = data_outcome[!is.na(data_outcome$ageNum),]
+
+# creates binary variables for age range.
+age_rangeVector <- to.dummy(data$ageCat, "Age")
+data_outcome = cbind(data_outcome, age_rangeVector)
+names(data_outcome)[names(data_outcome) == "Age.<18"] <- "Age<18"
+names(data_outcome)[names(data_outcome) == "Age.18-49"] <- "Age18-49"
+names(data_outcome)[names(data_outcome) == "Age.50-64"] <- "Age50-64"
+names(data_outcome)[names(data_outcome) == "Age.>64"] <- "Age>64" 
+```
+
+# Analysis of 56 age-gender specific clusters
+## Create the empty vectors for meta-clustering dataframe
+```{r empty_vectors, eval=TRUE, message=FALSE, warning=FALSE}
+### It's worth noting that these vectors should be changed if the user is interested in replicating the analysis with different dataset with different variables.
+name <- c()
+clusterSize <- c()
+Age<- c()
+Gender <- c()
+Pregnant <- c()
+Obesity <- c()
+Smoke <- c()
+
+Pneumonia <- c()
+Diabetes <- c()
+COPD <- c()
+Asthma <- c()
+INMUSUPR <- c()
+Hypertension <- c()
+Other_Disease <- c()
+Cardiovascular <- c()
+CKD <- c()
+
+Recovery <- c()
+Survival_days <- c()
+FifteenSurvival <- c()           # For all patients
+ThirtySurvival <- c()            # For all patients
+FifteenSurvival_deceased <- c()  # Only deceased patients
+ThirtySurvival_deceased <- c()   # Only deceased patients
+Symptoms_to_hospitalization_days <- c()
+Hospitalized <- c()
+ICU <- c()
+Intubated <- c()
+Other_case_contact <- c()
+Age_mean <- c()
+```
+
+## Select the proper K for each age-gender specific clustering
+You may consider to change the number `k` for your own analysis by the following chunks. In this tutorial we select different number of k for different age-gender groups.
+
+ages >64 years:
+```{r age65, eval=TRUE, message=FALSE, warning=FALSE}
+Bestk = list()
+Bestk[['>64']] = list()
+Bestk[[">64"]][["Male"]] = 8
+Bestk[[">64"]][["Female"]] = 8
+```
+
+ages between 50-64 years:
+```{r age5064, eval=TRUE, message=FALSE, warning=FALSE}
+Bestk[['50-64']] = list()
+Bestk[['50-64']][["Male"]] = 9
+Bestk[['50-64']][["Female"]] = 8
+```
+
+ages between 18-49 years:
+```{r age1849, eval=TRUE, message=FALSE, warning=FALSE}
+Bestk[["18-49"]] = list()
+Bestk[["18-49"]][["Male"]] = 7
+Bestk[["18-49"]][["Female"]] = 7
+```
+
+ages < 18 years:
+```{r age18, eval=TRUE, message=FALSE, warning=FALSE}
+Bestk[["<18"]] = list()
+Bestk[["<18"]][["Male"]] = 5
+Bestk[["<18"]][["Female"]] = 4
+```
+
+Create List for the Silhouette values in all age-gender groups (not used in this tutorial) since we only used them to illustrate Silhouette Plot in our [COVID-19 Subgroup Discovery and Exploration Tool (COVID-19 SDE Tool)](http://covid19sdetool.upv.es/)
+```{r BestK, eval=TRUE, message=FALSE, warning=FALSE}
+SilhoutteL = list()
+SilhoutteL[[">64"]] = list()
+SilhoutteL[["50-64"]] = list()
+SilhoutteL[["18-49"]] = list()
+SilhoutteL[["<18"]] = list()
+```
+
+## Obtain all the age-gender specific clusters
+
+this may take a long time depending on the sample size. Our dataset (n = 778 692) lasted roughly 3 hours 
+```{r age_gender_clusters, eval=TRUE, message=FALSE, warning=FALSE, fig.show = 'hide'}
+Genders <- c("Male", "Female") # M=Male, F=Female
+Age_cat <- c("<18", "18-49", "50-64", ">64")
+
+for (ageRange in Age_cat){
+  for (sex in Genders) {
+    
+    ### Filtering the data and do some modification in the data frame for MCA usage
+    dataExperiment = data_outcome[data_outcome$ageCat == ageRange,]
+    dataExperiment = dataExperiment[dataExperiment$SEX == sex,]
+    bestk = Bestk[[ageRange]][[sex]]
+    # print(ageRange)
+    # print(sex)
+    
+    ### Some preparation for MCA (Multiple Correspondence Analysis)
+    # vector for comorbidities
+    chronicsVector = dataExperiment %>% select(13, 19,20,21,22,23,24, 25, 27)    
+    # vector for habits
+    featuresVector = dataExperiment %>% select(26,28)                            
+    
+    featuresVector = data.frame(featuresVector)
+    colnames(featuresVector) = paste0("F_",colnames(featuresVector))
+    
+    chronicsVector = data.frame(chronicsVector)
+    colnames(chronicsVector) = paste0("C_",colnames(chronicsVector))
+    
+    data_analysis = cbind(featuresVector,chronicsVector)
+    data_analysis = sapply(data_analysis, as.logical)
+    
+    
+    ### Select the variables that we sought to analyze
+    data_analysis_metadata = dataExperiment[,c("ageNum", "ageCat", "SEX", "ENTITY_RES","NATIONALITY","SMOKE", "SECTOR","PREGNANT","OUTCOME","ICU","INTUBATED","SECTOR","OBESITY","OTHER_CASE_CONTACT","Survival_days","PATIENT_TYPE","FromSymptomToHospital_days","Age<18","Age18-49","Age50-64","Age>64",'Survival>15days','Survival>30days')]
+    
+    
+    
+    ### Perform Multiple Correspondence Analysis on 3 dimensions
+    res.mca = MCA(data_analysis, ncp = 3, graph = TRUE)
+    # fviz_screeplot(res.mca, addlabels = TRUE, ylim = c(0, 45))
+    ind = res.mca$ind
+    var = res.mca$var
+    
+    ### Perform clustering
+    clusterdistEuclideanMCA <- hclust.vector(ind$coord, method="ward", members=NULL, metric='euclidean', p=NULL) # ward is equivalent to ward.D2 in the library fastcluster
+    groups <- cutree(clusterdistEuclideanMCA, k=bestk)
+    sizes <- dataExperiment$ageNum
+    resultsClustering = list("ind" = ind, "clusterdistEuclideanMCA" = clusterdistEuclideanMCA, "k" = bestk, "groups" = groups, "sizes" = sizes)
+    
+    ### Calculate Silhouette Coefficients for each age-gender cluster
+    Silhouette <- intCriteria(ind$coord, resultsClustering$groups, c("Silhouette"))
+    SilhoutteL[[ageRange]][[sex]] = Silhouette
+    
+    ### selection of true habits and comorbidities values from MCA
+    res.mca$call$marge.col
+    trues = endsWith(names(res.mca$call$marge.col), "TRUE")
+    coord_T = var$coord[trues,]
+    rownames(coord_T) = substr(rownames(coord_T),1,nchar(rownames(coord_T))-5)
+    coord_T_F = coord_T[1:ncol(featuresVector),]
+    rownames(coord_T_F) = substr(rownames(coord_T_F),3,nchar(rownames(coord_T_F)))
+    coord_T_C = coord_T[-(1:ncol(featuresVector)),]
+    rownames(coord_T_C) = substr(rownames(coord_T_C),3,nchar(rownames(coord_T_C)))
+    
+    ### Calculate statistics
+    uniqueGroups = unique(resultsClustering$groups)
+    # change a bit the colnames' format (optional)
+    colnames(data_analysis) = substr(colnames(data_analysis),3,nchar(colnames(data_analysis)))
+    colnames(data_analysis) = make.names(colnames(data_analysis), unique = TRUE)
+    colnames(data_analysis) = str_replace_all(colnames(data_analysis),"_", " ")
+    
+    for (i in 1:length(uniqueGroups)){
+      
+      if(sex=='Male') {
+        sex_abbre = 'M'
+      } else {
+        sex_abbre = 'F'
+      }
+      
+      name <- append(name, paste(ageRange, sex_abbre,i, sep="")) # The name of the age-gender cluster. I.e: '18-49M7'
+      
+      patientGroupIdx = resultsClustering$groups %in% uniqueGroups[i]
+      nPatientsGroup = sum(patientGroupIdx)
+      clusterSize <- append(clusterSize, nPatientsGroup) # The 'n' of the cluster
+      
+      # comorbidity statistics
+      data_analysis_subgroup = data_analysis[patientGroupIdx,,drop = FALSE]
+      nind = nrow(data_analysis_subgroup)
+      data_analysis_subgroupT = t(data_analysis_subgroup)
+      resultsS = sapply(data.frame(data_analysis_subgroup), function(x) Prop(x)*100) ### The proportion results of input variables
+      Obesity <- append(Obesity, resultsS[1])
+      Smoke <- append(Smoke, resultsS[2])
+      Pneumonia <- append(Pneumonia, resultsS[3])
+      Diabetes <- append(Diabetes, resultsS[4])
+      COPD <- append(COPD, resultsS[5])
+      Asthma <- append(Asthma, resultsS[6])
+      INMUSUPR <- append(INMUSUPR, resultsS[7])
+      Hypertension <- append(Hypertension, resultsS[8])
+      Other_Disease <- append(Other_Disease, resultsS[9])
+      Cardiovascular <- append(Cardiovascular, resultsS[10])
+      CKD <- append(CKD, resultsS[11])
+      Age<- append(Age, ageRange)
+      
+      # sex, age, recovered statistics
+      data_analysis_metadata_subgroup = data_analysis_metadata[patientGroupIdx,]
+      
+      
+      # Age range statistics
+      Age17Stats = Prop(data_analysis_metadata_subgroup$'Age<18' == 1)*100
+      Age18Stats = Prop(data_analysis_metadata_subgroup$'Age18-49' == 1)*100
+      Age50Stats = Prop(data_analysis_metadata_subgroup$'Age50-64' == 1)*100
+      Age65Stats = Prop(data_analysis_metadata_subgroup$'Age>64' == 1)*100
+      
+      # Gender and pregnancy statistics
+      femaleStats = Prop(as.character(data_analysis_metadata_subgroup$SEX) %in% 'Female')*100
+      PregnantStats = Prop(data_analysis_metadata_subgroup$PREGNANT == 1)*100
+   
+      # ageMean = mean(data_analysis_metadata_subgroup$ageNum)
+      ageStats = Mean(data_analysis_metadata_subgroup$ageNum)
+      
+      # Outcome statistics
+      recoveredStats = Prop(data_analysis_metadata_subgroup$OUTCOME == 'Non-Deceased')*100
+      survivalStats = Mean(data_analysis_metadata_subgroup$Survival_days[data_analysis_metadata_subgroup$OUTCOME == 'Deceased'], na.rm = TRUE)
+      Survival15Stats = Prop(data_analysis_metadata_subgroup$'Survival>15days' == 1)*100
+      Survival30Stats = Prop(data_analysis_metadata_subgroup$'Survival>30days' == 1)*100
+      
+      aux <- data_analysis_metadata_subgroup[data_analysis_metadata_subgroup$OUTCOME == "Deceased",]
+      Survival15Stats_deceased = Prop(aux$'Survival>15days' == 1)*100
+      Survival30Stats_deceased = Prop(aux$'Survival>30days' == 1)*100
+      
+      SympToHostStats = Mean(data_analysis_metadata_subgroup$FromSymptomToHospital_days, na.rm = TRUE)
+      ICUStats = Prop(data_analysis_metadata_subgroup$ICU == 1)*100
+      intubStats = Prop(data_analysis_metadata_subgroup$INTUBATED == 1)*100
+      Patient_TypeStats = Prop(data_analysis_metadata_subgroup$PATIENT_TYPE == 'HOSPITALIZED')*100
+      Case_ContactStats = Prop(data_analysis_metadata_subgroup$OTHER_CASE_CONTACT == 1)*100
+      
+      ### Append the Stats to vectors
+      Pregnant <- append(Pregnant, PregnantStats)
+      Age_mean <- append(Age_mean, ageStats)
+      Recovery <- append(Recovery, recoveredStats)
+      Survival_days <- append(Survival_days, survivalStats)
+      
+      FifteenSurvival <- append(FifteenSurvival, Survival15Stats)
+      ThirtySurvival <- append(ThirtySurvival, Survival30Stats)
+      FifteenSurvival_deceased <- append(FifteenSurvival_deceased, Survival15Stats_deceased)
+      ThirtySurvival_deceased <- append(ThirtySurvival_deceased, Survival30Stats_deceased)
+      
+      Symptoms_to_hospitalization_days <- append(Symptoms_to_hospitalization_days, SympToHostStats)
+      Hospitalized <- append(Hospitalized, Patient_TypeStats)
+      ICU <- append(ICU, ICUStats)
+      Intubated <- append(Intubated, intubStats)
+      Other_case_contact <- append(Other_case_contact, Case_ContactStats)
+      Gender <- append(Gender, sex)
+    }
+  }
+}
+```
+
+
+## Save the previous results in a dataframe 
+```{r dataframe, eval=TRUE, message=FALSE, warning=FALSE}
+df <- data.frame(name, Obesity, Smoke, Pneumonia, Diabetes, COPD, Asthma, INMUSUPR,
+                 Hypertension, Other_Disease, Cardiovascular, CKD, clusterSize, Age, Gender,
+                 Pregnant, Recovery, Survival_days, FifteenSurvival, ThirtySurvival, FifteenSurvival_deceased, ThirtySurvival_deceased, Symptoms_to_hospitalization_days,
+                 Hospitalized, ICU, Intubated, Other_case_contact, Age_mean)
+
+### Each row comprises the calculated features of each age-gender group
+rownames(df) <- df$name  
+
+data_analysis_metadata = df
+```
+
+## Apply PCA analysis for resultant 56 age-gender specific clusters with 2D plot
+```{r PCA, eval=TRUE, message=FALSE, warning=FALSE}
+
+# vector for comorbidities
+chronicsVector = data_analysis_metadata %>% dplyr::select(4,5,6,7,8,9,10,11,12)
+# vector for habits
+featuresVector = data_analysis_metadata %>% dplyr::select(2,3)
+
+featuresVector = data.frame(featuresVector)
+colnames(featuresVector) = paste0("F_",colnames(featuresVector))
+
+chronicsVector = data.frame(chronicsVector)
+colnames(chronicsVector) = paste0("C_",colnames(chronicsVector))
+
+data_analysis = cbind(featuresVector,chronicsVector) # Will be used later in clustering
+
+pca_df <- data_analysis_metadata[2:12]
+pca<-(prcomp(pca_df)) # Apply PCA algorithm
+
+### make a scree plot (loadings)
+a = fviz_screeplot(pca, addlabels = TRUE, ylim = c(0, 45))
+
+### plot pc1 and pc2
+
+p <- autoplot(pca, data=data_analysis_metadata, colour="Age",frame=TRUE,loadings = TRUE, loadings.colour = 'blue', label = TRUE, label.size = 5, main='2D PCA from 56 COVID-19 subgroups',
+         loadings.label = TRUE, loadings.label.size = 5)+
+  theme_bw()
+```
+
+# Meta-Clustering
+
+## Perform hierarchical clustering and cut the resultant tree using the best number of clusters `k`.
+
+```{r Silhouette, eval=TRUE, message=FALSE, warning=FALSE}
+### Analyze the Silhouette Coefficients with plot for meta-clustering
+SilhouetteCoefficients = c()
+for (i in 2:12){
+  bestk = i
+  ind = pca$x[, 1:3] # equivalent to ind$coord
+  clusterdistEuclideanPCA = hclust.vector(ind, method="ward", members=NULL, metric='euclidean', p=NULL) #Equivalent to hclust but faster with vector data.
+  groups <- cutree(clusterdistEuclideanPCA, k=bestk)
+  sizes <- data_analysis_metadata$Age
+  resultsClustering = list("ind" = pca$x[,1:3], "clusterdistEuclideanPCA" = clusterdistEuclideanPCA, "k" = bestk, "groups" = groups, "sizes" = sizes)
+  a = intCriteria(pca$x[,1:3], resultsClustering$groups, c("Silhouette"))
+  SilhouetteCoefficients <- append(SilhouetteCoefficients, a[[1]])
+  }
+plot<-plot(SilhouetteCoefficients, type='o',col = "blue", xlab = "Number of clusters (k)", ylab = "Silhouette Coefficient",
+   main = "Silhouette Coefficient Plot")
+
+### We select k=11 for meta-clustering
+bestk = 11
+ind = pca$x[, 1:3] # equivalent to ind$coord in MCA
+clusterdistEuclideanPCA = hclust.vector(ind, method="ward", members=NULL, metric='euclidean', p=NULL) # using Ward’s minimum variance method with Euclidean squared distance
+groups <- cutree(clusterdistEuclideanPCA, k=bestk)
+sizes <- data_analysis_metadata$Age
+resultsClustering = list("ind" = pca$x[,1:3], "clusterdistEuclideanPCA" = clusterdistEuclideanPCA, "k" = bestk, "groups" = groups, "sizes" = sizes)
+```
+
+
+Perform first some preparation to facilitate visualizations.
+```{r plotsPrep, eval=TRUE, message=FALSE, warning=FALSE}
+# selection of true symptoms and comorbidities values from MCA
+trues = endsWith(names(res.mca$call$marge.col), "TRUE")
+coord_T = var$coord[trues,]
+rownames(coord_T) = substr(rownames(coord_T),1,nchar(rownames(coord_T))-5)
+coord_T_F = coord_T[1:ncol(featuresVector),]
+rownames(coord_T_F) = substr(rownames(coord_T_F),3,nchar(rownames(coord_T_F)))
+coord_T_C = coord_T[-(1:ncol(featuresVector)),]
+rownames(coord_T_C) = substr(rownames(coord_T_C),3,nchar(rownames(coord_T_C)))
+
+# configuration of scatter properties
+markerSize2d = 35
+markerSize2ddiamond = 25
+markerSize3d = 300
+markerSize3ddiamond = 250
+axx <- list(
+  title = "1<sup>st</sup> component"
+  
+)
+axy <- list(
+  title = "2<sup>nd</sup> component"
+)
+axz <- list(
+  title = "3<sup>rd</sup> component"
+)
+
+### Hide grid in order to obtain high resolution plot without harsh grid lines after exporting to html file
+axx_no_grid <- list(
+  title = "1<sup>st</sup> component", showgrid = FALSE
+  
+)
+axy_no_grid <- list(
+  title = "2<sup>nd</sup> component", showgrid = FALSE
+)
+
+# color resources
+colorsVars = brewer.pal(n = 2, name = "BrBG")
+```
+
+## Results visualizations
+
+In the following results, the information about the subgroups is consistent within scatter plots, detailed table, pattern discovery using LOESS model, and correspond to the subgroups found in the previous application of clustering to the selected Age-gender group with the corresponding number of clusters `k`.
+
+### COVID-19 case embeddings (2D and 3D)
+
+Subgroups scatter
+```{r 2D_scatter, eval=TRUE, message=FALSE, warning=FALSE}
+is.num <- sapply(data_analysis_metadata, is.numeric)
+data_analysis_metadata[is.num] <- lapply(data_analysis_metadata[is.num], round, 2)
+
+ax <- list(
+  title = "",
+  showgrid = FALSE
+)
+
+pClusters2d <- plot_ly(x = pca$x[,1], y = pca$x[,2],
+              color = as.factor(paste("Subgroup",format(resultsClustering$groups, digits=2))),
+              colors = brewer.pal(n = bestk, name = "Set3"),
+              size=7,
+              text = data_analysis_metadata$name,
+              marker = list(sizemode = 'area'),
+              scene = 'sceneClusters') %>%
+  layout(title = "Subgroups (obtained at 3D)",
+         xaxis = ax, 
+         yaxis = ax) %>% 
+  config(displaylogo = FALSE)
+
+t <- list(
+  family = "sans serif",
+  size = 15,
+  showgrid=FALSE,
+  color = toRGB("grey50"))
+
+pClusters2d <- pClusters2d %>% add_text(textfont = t)
+
+pClusters2d
+```
+
+```{r 3D_scatter, eval=TRUE, message=FALSE, warning=FALSE}
+pClusters3d <- plot_ly(x = pca$x[,1], y = pca$x[,2], z = pca$x[,3],
+              color = as.factor(paste("Subgroup",format(resultsClustering$groups, digits=2))),
+              colors = brewer.pal(n = length(unique(resultsClustering$groups)), name = "Set2"),
+              size = I(markerSize3d), type = "scatter3d", mode = "markers",
+              text = paste0("Patient ID: ",rownames(pca$x),"\n Age:",resultsClustering$sizes),
+              marker = list(sizemode = 'area'),
+              scene = 'sceneClusters') %>%
+  layout(title = "Subgroups", scene = list(xaxis=axx,yaxis=axy,zaxis=axz)) %>% 
+  config(displaylogo = FALSE)
+
+t <- list(
+  family = "sans serif",
+  size = 8,
+  color = toRGB("grey50"))
+
+pClusters3d
+```
+
+
+### Summary Table regarding 11 meta-clusters
+```{r table, eval=TRUE, message=FALSE, warning=FALSE}
+alphaci = 0.05
+uniqueGroups = unique(resultsClustering$groups)
+resultsTable = data.frame(matrix(nrow = ncol(data_analysis)+19, ncol = length(uniqueGroups)))
+colnames(data_analysis) = substr(colnames(data_analysis),3,nchar(colnames(data_analysis)))
+colnames(data_analysis) = make.names(colnames(data_analysis), unique = TRUE)
+colnames(data_analysis) = str_replace_all(colnames(data_analysis),"_", " ")
+
+# Note: this (whihout make.names) returns an error when same text is in symptoms and comorbidities, a solution might be using a column for names, or avoid repated terms
+rownames(resultsTable) <- c(sprintf('No. of individuals (n<sub>total</sub> = %d)',nrow(data_analysis)), colnames(data_analysis),"Age<17","Age18-49","Age50-64","Age>65",'PREGNANT', 'Females','Age','Recovered','Survival days (deceased)','Survival>15days','Survival>30days', 'Survival>15days_deceased','Survival>30days_deceased','Symptoms to hospitalization days','Hospitalized','ICU','INTUBATED','Other case contact')
+colnames(resultsTable) <- paste('Subgroup',uniqueGroups)
+
+for (i in 1:length(uniqueGroups)){
+  
+  patientGroupIdx = resultsClustering$groups %in% uniqueGroups[i]
+  nPatientsGroup = sum(patientGroupIdx)
+  
+  # comorbidity statistics
+  data_analysis_subgroup = data_analysis[patientGroupIdx,,drop = FALSE]
+  nind = nrow(data_analysis_subgroup)
+  data_analysis_subgroupT = t(data_analysis_subgroup)
+  resultsS = sapply(data.frame(data_analysis_subgroup), function(x) mCI(x, alphaci))
+  subgroupResultColumn = apply(resultsS, 2, function(x) sprintf('%.2f (%.2f-%.2f)',x[1],x[2],x[3]))
+  
+  # sex, age, recovered statistics
+  data_analysis_metadata_subgroup = data_analysis_metadata[patientGroupIdx,]
+  
+  #Age range stats
+  Age17Stats = pCI(data_analysis_metadata_subgroup$Age == '<=17', alphaci)*100
+  Age18Stats = pCI(data_analysis_metadata_subgroup$Age == '18-49', alphaci)*100
+  Age50Stats = pCI(data_analysis_metadata_subgroup$Age == '50-64', alphaci)*100
+  Age65Stats = pCI(data_analysis_metadata_subgroup$Age == '>=65', alphaci)*100
+
+  femaleStats = pCI(data_analysis_metadata_subgroup$Gender=='Female', alphaci)*100
+  PregnantStats = mCI(data_analysis_metadata_subgroup$Pregnant, alphaci)
+
+  ageStats = mCI(data_analysis_metadata_subgroup$Age_mean, alphaci)
+  recoveredStats = mCI(data_analysis_metadata_subgroup$Recovery, alphaci)
+  survivalStats = mCI(data_analysis_metadata_subgroup$Survival_days, alphaci, na.rm = TRUE)
+  SympToHostStats = mCI(data_analysis_metadata_subgroup$Symptoms_to_hospitalization_days, alphaci, na.rm = TRUE)
+  ICUStats = mCI(data_analysis_metadata_subgroup$ICU, alphaci)
+  intubStats = mCI(data_analysis_metadata_subgroup$Intubated, alphaci)
+  Patient_TypeStats = mCI(data_analysis_metadata_subgroup$Hospitalized, alphaci)
+  Case_ContactStats = mCI(data_analysis_metadata_subgroup$Other_case_contact, alphaci)
+  Survival15Stats = mCI(data_analysis_metadata_subgroup$FifteenSurvival,alphaci, na.rm = TRUE)                     ### Both deceased and non-deceased patients
+  Survival30Stats = mCI(data_analysis_metadata_subgroup$ThirtySurvival,alphaci, na.rm = TRUE)
+  Survival15_deceasedStats = mCI(data_analysis_metadata_subgroup$FifteenSurvival_deceased,alphaci, na.rm = TRUE)   ### Percetages among deceased patients
+  Survival30_deceasedStats = mCI(data_analysis_metadata_subgroup$ThirtySurvival_deceased,alphaci, na.rm = TRUE)
+  
+  # compile final result column
+  subgroupResultColumn = c(as.character(nPatientsGroup), subgroupResultColumn, sprintf('%.2f (%.2f-%.2f)',Age17Stats[1],Age17Stats[2],Age17Stats[3]), sprintf('%.2f (%.2f-%.2f)',Age18Stats[1],Age18Stats[2],Age18Stats[3]), sprintf('%.2f (%.2f-%.2f)',Age50Stats[1],Age50Stats[2],Age50Stats[3]), sprintf('%.2f (%.2f-%.2f)',Age65Stats[1],Age65Stats[2],Age65Stats[3]), sprintf('%.2f 
+                                                                                                                                                                                                                                                                                                                                                                                   (%.2f-%.2f)', PregnantStats[1], PregnantStats[2],PregnantStats[3]),sprintf('%.2f (%.2f-%.2f)',femaleStats[1],femaleStats[2],femaleStats[3]), sprintf('%.2f (%.2f-%.2f)',ageStats[1],ageStats[2],ageStats[3]), sprintf('%.2f (%.2f-%.2f)',recoveredStats[1],recoveredStats[2],recoveredStats[3]))
+  
+  subgroupResultColumn = c(subgroupResultColumn, sprintf('%.2f (%.2f-%.2f)',survivalStats[1],survivalStats[2],survivalStats[3]),
+  sprintf('%.2f (%.2f-%.2f)',Survival15Stats[1],Survival15Stats[2],Survival15Stats[3]),
+  sprintf('%.2f (%.2f-%.2f)',Survival30Stats[1],Survival30Stats[2],Survival30Stats[3]),
+  sprintf('%.2f (%.2f-%.2f)',Survival15_deceasedStats[1],Survival15_deceasedStats[2],Survival15_deceasedStats[3]),
+  sprintf('%.2f (%.2f-%.2f)',Survival30_deceasedStats[1],Survival30_deceasedStats[2],Survival30_deceasedStats[3]),
+  sprintf('%.2f (%.2f-%.2f)',SympToHostStats[1],SympToHostStats[2],SympToHostStats[3]))
+  
+  subgroupResultColumn = c(subgroupResultColumn,sprintf('%.2f (%.2f-%.2f)',Patient_TypeStats[1],Patient_TypeStats[2],Patient_TypeStats[3]), sprintf('%.2f (%.2f-%.2f)',ICUStats[1],ICUStats[2],ICUStats[3]),sprintf('%.2f (%.2f-%.2f)',intubStats[1],intubStats[2],intubStats[3]), sprintf('%.2f (%.2f-%.2f)',Case_ContactStats[1],Case_ContactStats[2],Case_ContactStats[3]))
+  
+  resultsTable[i] <- subgroupResultColumn
+}
+
+# resultsTable$variables <- rownames(resultsTable)
+# write_xlsx(resultsTable,"C:\\Users\\Lexin Zhou\\11Meta_subgroups_table.xlsx")
+
+# names(resultsTable) <- cell_spec(names(resultsTable), background = "yellow")
+tTable = kable(resultsTable, format = "html", escape = F) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"), full_width = F) %>%
+  pack_rows("Features (%|x, CI 95%)", 2, 1+ncol(featuresVector)) %>%
+  pack_rows("Comorbidities (%|x, CI 95%)", 2+ncol(featuresVector), 2+ncol(featuresVector)+ncol(chronicsVector)-1) %>%
+  pack_rows("Age range (%|x, CI 95%)", 2+ncol(featuresVector)+ncol(chronicsVector), 2+ncol(featuresVector)+ncol(chronicsVector)+3)%>%
+  pack_rows("Demographics (%|x, CI 95%)", 6+ncol(featuresVector)+ncol(chronicsVector), 2+ncol(featuresVector)+ncol(chronicsVector)+6) %>%
+  pack_rows("Outcomes (%|x, CI 95%)", 2+ncol(featuresVector)+ncol(chronicsVector)+7, 2+ncol(featuresVector)+ncol(chronicsVector)+7+8+2) 
+
+
+groupColors = brewer.pal(n = ncol(resultsTable), name = "Set3")
+
+for (i in 1:ncol(resultsTable)) {
+  tTable = tTable %>% column_spec(i+1, background = groupColors[i], include_thead = TRUE) %>%
+    column_spec(i+1, background = "inherit")
+}
+
+tTable
+```
+
+
+### Heatmap describing the probability of studied variables among 56 age-gender cluters
+
+The heatmap also specifies  the meta-cluster that each age-gender cluster belongs
+```{r Heatmap, eval=TRUE, message=FALSE, warning=FALSE, fig.dim = c(12, 9)}
+df1 = subset(data_analysis_metadata, select = -c(name, Age, Gender, clusterSize, Survival_days)) 
+df1 <- df1 %>% 
+  dplyr::rename(
+    "Survival>15days" = FifteenSurvival,
+    "Survival>30days" = ThirtySurvival,
+    "Survival>15days (deceased)" = FifteenSurvival_deceased,
+    "Survival>30days (deceased)" = ThirtySurvival_deceased
+    )
+
+# make ClusterSize groups <17, 18-49, 50-64, >65
+less500  = df$clusterSize < 500
+less2000 = df$clusterSize < 2000 & df$clusterSize >= 500
+less5000 = df$clusterSize < 5000 & df$clusterSize >= 2000
+less10000 = df$clusterSize < 10000 & df$clusterSize >= 5000
+less30000 = df$clusterSize < 30000 & df$clusterSize >= 10000
+more30000 = df$clusterSize > 30000
+
+aux <- df
+aux$clusterSizeCat[less500] = '<500'
+aux$clusterSizeCat[less2000] = '500-1999'
+aux$clusterSizeCat[less5000] = '2K-4999'
+aux$clusterSizeCat[less10000] = '5K-9999'
+aux$clusterSizeCat[less30000] = '10K-29999'
+aux$clusterSizeCat[more30000] = '>=30000'
+
+Clus_Size <- aux$clusterSizeCat
+names(Clus_Size) <- df$name
+ClusterGroup <- resultsClustering$groups 
+ClusterGroup <- as.factor(ClusterGroup)
+names(ClusterGroup) <- df$name
+
+### Create annotation rows
+my_annotation_row = data.frame(
+                   Cluster_size = Clus_Size,
+                   Cluster_subgroup = ClusterGroup
+                   )
+
+### Create annotation rows' colors
+my_colour = list(
+    Cluster_size = brewer.pal(9, "YlGn")[1:6],
+    Cluster_subgroup = brewer.pal(n = 12, name = "Set3")[1:bestk]
+    )
+
+names(my_colour$Cluster_size) <- c('<500','500-1999','2K-4999','5K-9999','10K-29999','>=30000')
+names(my_colour$Cluster_subgroup) <- c(1:bestk)
+
+### Order the dataframe to group by the meta-clusters
+df1$cluster <- resultsClustering$groups
+df1 <- df1 %>% arrange(cluster)  
+df1$cluster <- NULL  # Remove it because we do not want it appears twice (as numeric variables)
+
+### Plot
+### For the following pheatmap function, it is worth noting that we did not use "display_numbers = T" parameter to illustrate the exact figure (probability) of each box since the heatmap is too small which made it impossible to visualize. When user uses this tutorial we recommend to include this parameter if the user wants to generate the heatmap with numbers.
+final_Heat2 <- pheatmap(df1, name='The remain variables', main='HeatMap of the 56 age-gender specific clusters among 11 meta-subgroups', angle_col = c('315'), cluster_cols=F,
+         annotation_row = my_annotation_row,
+         annotation_colors = my_colour, cluster_rows = F)
+
+final_Heat2
+```
+
+
+```{r Heatmap_age, eval=TRUE, message=FALSE, warning=FALSE, fig.dim = c(12, 9)}
+### Redo final_Heat2 by the order of clusters' age (optional)
+target <- c("<18F1","<18F2","<18F3","<18F4",
+                      "<18M1","<18M2","<18M3","<18M4","<18M5",
+                      "18-49F1","18-49F2","18-49F3","18-49F4","18-49F5","18-49F6","18-49F7",
+                      "18-49M1","18-49M2","18-49M3","18-49M4","18-49M5","18-49M6","18-49M7",
+                      "50-64F1","50-64F2","50-64F3","50-64F4","50-64F5","50-64F6","50-64F7","50-64F8",
+                      "50-64M1","50-64M2","50-64M3","50-64M4","50-64M5","50-64M6","50-64M7","50-64M8","50-64M9",
+                      ">64F1",">64F2",">64F3",">64F4",">64F5",">64F6",">64F7",">64F8",
+                      ">64M1",">64M2",">64M3",">64M4",">64M5",">64M6",">64M7",">64M8") 
+
+df2 <- df1[match(target, rownames(df1)),]
+
+### Use display_numbers = T if we want to show the exact number of each box
+final_Heat3 <- pheatmap(df2, name='The remain variables', main='HeatMap of the 56 age-gender specific clusters among 11 meta-subgroups', angle_col = c('315'), cluster_cols=F,cluster_rows = F)
+final_Heat3
+```
+
+
+## Pattern discovery among eleven meta-clusters (56 age-gender clusters) with LOESS models 
+
+### Define generateLOESS function
+```{r LOESS_Mortality, eval=TRUE, message=FALSE, warning=FALSE}
+generateLOESS <- function(pca, Y, Y_name) {
+  # pca is the result of pca whose PC1 and PC2 will be used to estimate  severity variable that we want to predict
+  # Y is the vector that comprises the values of severity variable (e.g. data_analysis_metadata$Mortality) 
+  # Y_name is just the name of variable Y. We will use this for legend purpose.
+  df <- data.frame(pca$x[,1], pca$x[,2], Y) 
+  colnames(df) <- c('pca1','pca2','YVal')
+  data.loess <- loess(YVal ~ pca1 + pca2, data = df)  ### Predicting Y using PC1 and PC2
+  
+  graph_reso <- 0.5
+  xgrid <- seq(min(df$pca1), max(df$pca1), by = graph_reso)
+  ygrid <- seq(min(df$pca2), max(df$pca2), by = graph_reso)
+  
+  data.fit <- expand.grid(pca1 = xgrid,
+                             pca2 = ygrid)
+  mtrx3d <-  predict(data.loess, newdata = data.fit)
+
+  # plot0 <- contour(x = xgrid, y = ygrid, z = mtrx3d, xlab = "pca1", ylab = "pca2")
+  # Transform data to long form
+  mtrx.melt <- melt(mtrx3d, id.vars = c("pca1", "pca2"), measure.vars = YVal)
+  names(mtrx.melt) <- c("pca1", "pca2", 'YVal')
+  
+  ### Eliminate negative values
+  mtrx.melt$YVal <- ifelse(mtrx.melt$YVal < 0, 0, mtrx.melt$YVal)
+
+  # Return data to numeric form
+  mtrx.melt$pca1 <- as.numeric(str_sub(mtrx.melt$pca1, str_locate(mtrx.melt$pca1, "=")[1,1] + 1))
+  mtrx.melt$pca2 <- as.numeric(str_sub(mtrx.melt$pca2, str_locate(mtrx.melt$pca2, "=")[1,1] + 1))
+
+  # Create ten segments to be colored in
+  mtrx.melt$equalSpace <- cut(mtrx.melt$YVal, 7)
+  # Sort the segments in ascending order
+  breaks <- levels(unique(mtrx.melt$equalSpace))
+  # Plot
+  plot3 <- ggplot(mtrx.melt, aes(x=pca1,
+                  y=pca2, z=YVal)) +
+         geom_tile(data = mtrx.melt, aes( x=pca1,
+                  y=pca2, fill = equalSpace)) +
+         geom_point(data = df, aes(x = pca1, y = pca2), shape = 1, size =8, color='red')+ 
+         # geom_text(data=df, aes(label=Y_name),hjust=0, vjust=0, size=5)+
+         geom_contour(color = "white", alpha = 0.5,size=0) +
+         theme_bw() + 
+         theme(panel.grid.major = element_blank(),
+         panel.grid.minor = element_blank()) +
+         xlab("PCA1") +
+         ylab("PCA2") +
+         scale_fill_manual(values = c("#80cdc1", "#c7eae5", "#f5f5f5",
+                                     "#f6e8c3", "#dfc27d", "#bf812d", "#8c510a"),
+                           name = Y_name, breaks = breaks, labels = breaks)
+  return (plot3)
+}
+```
+
+### Visualization of the patterns
+We studied Mortality, ICU, Intubation, Hospitalization, symptoms to hospital, Survival15, Survival30,Survival15_deceased, Survival30_deceased.
+```{r}
+### Create Mortality variable based on Recovery rate
+data_analysis_metadata$Mortality <- 100 - data_analysis_metadata$Recovery
+# Mortality
+generateLOESS(pca, data_analysis_metadata$Mortality, 'Mortality')
+
+# ICU
+generateLOESS(pca, data_analysis_metadata$ICU, 'ICU')
+
+# Intubation
+generateLOESS(pca, data_analysis_metadata$Intubated, 'Intubation')
+
+# Hospitalization
+generateLOESS(pca, data_analysis_metadata$Hospitalized, 'Hospitalization')
+
+# Symptoms_to_hospitalization_days
+generateLOESS(pca, data_analysis_metadata$Symptoms_to_hospitalization_days, 'Symptoms_to_hospitalization_days')
+
+# Survival>15days (%)
+generateLOESS(pca, data_analysis_metadata$FifteenSurvival, 'Survival>15days (%)')
+
+# Survival>30days (%)
+generateLOESS(pca, data_analysis_metadata$ThirtySurvival, 'Survival>30days (%)')
+
+# Survival>15days_deceased (%)
+generateLOESS(pca, data_analysis_metadata$Intubated, 'Survival>15days_deceased (%)')
+
+# Survival>30days_deceased (%)
+generateLOESS(pca, data_analysis_metadata$ThirtySurvival_deceased, 'Survival>30days_deceased (%)')
+```
+
+

@@ -1,0 +1,7 @@
+201102COVID19MEXICO.rar --> Original Spanish version of our studied dataset
+
+COVID19_MEXICO_LATEST_DATA.rar --> Translated version (English) of the original dataset with derived variables that we created with specific interests
+
+diccionario_datos_covid19 --> Dictionary of the dataset that explains how to interpret the dataset since all the variables were encoded in numbers in the original dataset (Spanish version)
+
+

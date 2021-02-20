@@ -1,0 +1,9 @@
+This four functions we will use in meta-clustering tutorial.
+
+mCI.R --> Calculate the mean with 95%CI
+
+pCI.R --> Calculate the proportion of positive rows with a given condition with 95%CI
+
+Mean.R --> Only calculate the mean without CI
+
+Prop.R --> Only calculate the proportion without CI

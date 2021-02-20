@@ -1,0 +1,847 @@
+---
+title: "Source Variability on Mexico Government's COVID-19 dataset"
+output: 
+  html_document:
+    toc: true # table of content true
+    toc_depth: 3  # upto three depths of headings (specified by #, ## and ###)
+    number_sections: true  ## if you want number sections at each table header
+    theme: united  # many options for theme, this one is my favorite.
+    highlight: tango  # specifies the syntax highlighting style
+author: |
+        | Lexin Zhou^1^,  Nekane Romero^1^, Juan Martínez-Miranda^3^, J Alberto Conejero^2^, Juan M García-Gómez^1^, Carlos Sáez^1^
+        | 
+        | ^1^Biomedical Data Science Lab, Instituto Universitario de Tecnologías de la Información y Comunicaciones (ITACA), Universitat Politècnica de València (UPV), Camino de Vera s/n, Valencia 46022, España. ^2^Instituto Universitario de Matemática Pura y Aplicada (IUMPA), Universitat Politécnica de València, Valencia, Spain. ^3^CONACyT - Centro de Investigación Científica y de Educación Superior de Ensenada - CICESE-UT3, Mexico.
+        | Corresponding authors: Lexin Zhou <lexinzhouds@gmail.com> and Carlos Sáez <carsaesi@upv.es>
+date: "February 14, 2021"
+---
+
+In this work, we assess the variability (or heterogeneity) between distinct sources populating the [Mexico Government COVID-19 dataset](https://www.gob.mx/salud/documentos/datos-abiertos-152127). We use as reference sources the states and type of clinical institutions where patients received medical attention. Further information for EHRSourceVariability package can be found in our GitHub repository [EHRSourceVariability](https://github.com/carsaesi/EHRsourceVariability/). This work is part of the initial data quality assessment in the [COVID-19 Metaclustering](https://github.com/bdslab-upv/covid19-metaclustering) project of the Biomedical Data Science Lab of the Universitat Politècnica de València, Spain.
+
+If you use this code please cite:
+
+<blockquote style='font-size:14px'>Lexin Zhou, Nekane Romero, Juan Martínez-Miranda, J Alberto Conejero, Juan M García-Gómez, Carlos Sáez. Heterogeneity in COVID-19 severity patterns among age-gender groups: an analysis of 778 692 Mexican patients through a meta-clustering technique. Preprint submitted to medRxiv. 
+
+Carlos Sáez, Montserrat Robles, Juan M García-Gómez, Stability metrics for multi-source biomedical data based on simplicial projections from probability distribution distances. Statistical methods in medical research. 2017;26(1):312-336
+</blockquote>
+
+If you are interested in collaborating in this work please [contact us](mailto:carsaesi@upv.es).
+
+# Setup
+
+Install and load the required packages
+
+```{r setup, eval=TRUE, message=FALSE, warning=FALSE}
+# the function p_load() from pacman package checks to see if a package is installed, if not it attempts to install the package and then loads it
+# By this way, we simplify the notebook's structure
+# install.packages("pacman")   
+library(pacman)
+pacman::p_load(writexl, ggplot2, ggfortify, text2vec, plotly, factoextra, dplyr, stringr, kableExtra, MVN, lsa, Rtsne, FactoMineR, ape, RColorBrewer, survival, survminer, varhandle, glue, cluster, fastcluster, graphics, clusterCrit, ComplexHeatmap, reshape, pheatmap, PCAmixdata, viridisLite, micsTools)
+```
+
+
+Obtain the functions of [EHRSourceVariability package](https://github.com/carsaesi/EHRsourceVariability) (modified version).
+```{r}
+estimateMSVmetrics <- function(probabilities) {
+  
+  ns = ncol(probabilities);
+  
+  distsM = matrix(data=0,nrow=ns,ns)
+  for(i in 1:(ns-1)){
+    for(j in (i+1):ns){
+      distsM[i,j] = sqrt(jsdiv(probabilities[,i],probabilities[,j]))
+      distsM[j,i] = distsM[i,j]
+    }
+  }
+  
+  vertices <- cmdscale(distsM,eig=FALSE, k=ns-1)
+  
+  c = colSums(vertices)/ns
+  cc = matrix(rep(c, ns),nrow=ns,byrow=TRUE)
+  cc2 = vertices-cc
+  dc = apply(cc2, 1, norm, type="2")
+  
+  gpdmetric = mean(dc)/distc(ns)
+  sposmetrics = dc/(1-(1/ns))
+  
+  msvMetrics <- list(gpdmetric, sposmetrics, vertices)
+  names(msvMetrics) <- c("GPD","SPOs","Vertices")
+  
+  return(msvMetrics)
+}
+
+jsdiv <- function(p, q){
+  m <- log2(0.5 * (p + q))
+  jsdiv <- 0.5 * (sum(p * (log2(p) - m),na.rm = TRUE) + sum(q * (log2(q) - m),na.rm = TRUE))
+}
+
+distc <- function(D){
+  gamma = acos(-1/D)
+  temp = sin((pi-gamma)/2)/sin(gamma)
+  temp[D==1] = 0.5
+  distc = temp
+}
+
+plotMSV <- function(msvMetrics, nBySource, idSource) {
+  p <- plotly::plot_ly(x = msvMetrics$Vertices[,1], y = msvMetrics$Vertices[,2], 
+                       color = msvMetrics$SPOs,
+                       colors = 'viridis',
+                       size = as.integer(nBySource),
+                       marker = list(sizemode = 'diameter'),
+                       text = names(nBySource)                    # idSource does not work adequately since its is different compared with nBySource, to be rectified.
+  ) %>%  plotly::layout(title = sprintf("Multi-Source Variability plot"),
+                        xaxis = list(tickfont = list(size = 25), titlefont = list(size = 25), title = "D1-Simplex"), 
+                        yaxis = list(tickfont = list(size = 25), titlefont = list(size = 25), title = "D2-Simplex")) %>%
+    plotly::add_markers() %>% 
+    plotly::add_text(textfont = list(
+                            family = "sans serif",
+                            size = 11,
+                            color = plotly::toRGB("darkorange")))
+  return(p)
+}
+```
+
+Source the required functions. These can be found at the [COVID-19 Metaclustering](https://github.com/bdslab-upv/covid19-metaclustering) GitHub repository. We recommended to download the whole repository, which includes this document `.Rmd` file.
+
+```{r, functions, eval=TRUE, message=FALSE, warning=FALSE}
+source('./R/pCI.R')
+source('./R/mCI.R')
+source('./R/Prop.R')
+source('./R/Mean.R')
+```
+
+# Data loading
+
+Load the nCov2019 dataset at 2020-11-02.
+
+```{r dataLoad, eval=TRUE, message=FALSE, warning=FALSE}
+### LOAD AND FORMAT DATASET 
+untar('./data/COVID19_MEXICO_LATEST_DATA.tar.gz', exdir = "data")
+data = read.csv2("./data/COVID19_MEXICO_LATEST_DATA.csv", encoding="UTF-8", sep = ",", header = TRUE, na.strings = "", stringsAsFactors = FALSE,dec=".",
+                 colClasses = c( "numeric",   #Index of row
+                                 "Date",      #LAST_UPDATE
+                                 "character", #ID_REGISTRATION
+                                 "factor",    #ORIGIN
+                                 "factor",    #SECTOR
+                                 "character", #ENTITY_UM
+                                 "factor",    #SEX
+                                 "character", #ENTITY_NAT
+                                 "character", #ENTITY_RES
+                                 "character", #MUNICIPALITY_RES
+                                 "factor",    #PATIENT_TYPE
+                                 "Date",      #ADMISSION_DATE
+                                 "Date",      #SYMPTOMS_DATE
+                                 "Date",      #DEATH_DATE
+                                 "numeric",   #INTUBATED
+                                 "numeric",   #PNEUMONIA
+                                 "numeric",   #AGE
+                                 "character", #NATIONALITY
+                                 "numeric",   #PREGNANT
+                                 "numeric",   #SPEAK_INDIGENOUS_LANGUAGE
+                                 "numeric",   #Indigenous
+                                 "numeric",   #DIABETES
+                                 "numeric",   #COPD
+                                 "numeric",   #ASTHMA
+                                 "numeric",   #INMUSUPR
+                                 "numeric",   #HYPERTENSION
+                                 "numeric",   #OTHER_DISEASE
+                                 "numeric",   #CARDIOVASCULAR
+                                 "numeric",   #OBESITY 
+                                 "numeric",   #CHRONIC_KIDNEY_DISEASE
+                                 "numeric",   #SMOKE
+                                 "factor",    #OTHER_CASE_CONTACT
+                                 "factor",    #TESTED
+                                 "factor",    #RESULT_LAB
+                                 "factor",    #FINAL_CLASIFICATION
+                                 "factor",    #MIGRANT
+                                 "character", #COUNTRY_NATIONALITY
+                                 "character", #COUNTRY_ORIGIN
+                                 "factor",    #UCI
+                                 "factor",    #OUTCOME ('See the Python notebook')
+                                 "numeric",   #Survival_days ('See the Python notebook')
+                                 "character"  #From_symptoms_to_hospital_days ('See the Python notebook')
+                 ))  
+
+```
+
+# Data preparation
+
+## Convert and derive variables
+```{r dataSelection, eval=TRUE, message=FALSE, warning=FALSE}
+# Select only positive patients
+data = data[data$RESULT_LAB == 'Positive SARS-CoV-2', ]
+# data = data[data$RESULT_LAB == 'Non-Positive SARS-CoV-2', ]
+
+# convert some variable types
+data$ageNum = as.numeric(data$AGE)
+data$Survival_days = as.numeric(data$Survival_days)
+data$FromSymptomToHospital_days = as.numeric(data$FromSymptomToHospital_days)
+data$ageCat = vector(mode = "character", length = nrow(data))
+names(data)[names(data) == "UCI"] <- "ICU" # Translate UCI (Spanish) to ICU (Intensive Care Unit)
+
+# make age groups <17, 18-49, 50-64, >65
+idsLeq17  = data$ageNum <= 17
+ids18to49 = data$ageNum > 17 & data$ageNum <= 49
+ids50to64 = data$ageNum > 49 & data$ageNum <= 64
+idsGeq65  = data$ageNum > 64
+data$ageCat[idsLeq17] = '<18'
+data$ageCat[ids18to49] = '18-49'
+data$ageCat[ids50to64] = '50-64'
+data$ageCat[idsGeq65] = '>64'
+
+# Manually fix variable types
+data$ADMISSION_DATE = as.Date(data$ADMISSION_DATE)
+data$LAST_UPDATE = as.Date(data$LAST_UPDATE)
+data$SYMPTOMS_DATE = as.Date(data$SYMPTOMS_DATE)
+data$DEATH_DATE = as.Date(data$DEATH_DATE)
+
+# remove rows with missing Admission dates and remove index column
+data = data[!is.na(data$ADMISSION_DATE),-1]
+
+# remove rows: LAST_UPDATE and ID_REGISTRATION due to their irrelevance
+data = subset(data, select = -c(LAST_UPDATE, ID_REGISTRATION))
+
+# Create new columns for categorizing survival days
+data$'Survival<15days' <- ifelse(data$Survival_days<15, 1, 0)
+data$'Survival<30days' <- ifelse(data$Survival_days<30, 1, 0)
+data$'Survival<15days'[is.na(data$'Survival<15days')]<-0 # Fill nan-value
+data$'Survival<30days'[is.na(data$'Survival<30days')]<-0
+
+data_outcome = data[which(!is.na(data$OUTCOME)),]
+
+data_outcome = data_outcome[!is.na(data_outcome$ageNum),]
+
+# creates binary variables for age range.
+age_rangeVector <- to.dummy(data$ageCat, "Age")
+data_outcome = cbind(data_outcome, age_rangeVector)
+names(data_outcome)[names(data_outcome) == "Age.<18"] <- "Age<18"
+names(data_outcome)[names(data_outcome) == "Age.18-49"] <- "Age18-49"
+names(data_outcome)[names(data_outcome) == "Age.50-64"] <- "Age50-64"
+names(data_outcome)[names(data_outcome) == "Age.>64"] <- "Age>64" 
+
+# Ordenar por el rango de edad de los pacientes. Luego aplicar clustering$groups y voy añadiendo a un vector y al final lo pongo como una columna
+###############
+### sort DATA (CUIDADO, ORDENA PRIMERO LOS FEMALES, ADAPTAR CON LOS CODIGOS DEL PCA PARA PODER HACERLO BIEN)
+###############
+data <- data[
+  with(data, order(ageCat, SEX)),
+]
+
+```
+
+
+# Analysis with specific age-gender group
+First, create the empty vectors for meta-clustering dataframe
+```{r empty_vectors, eval=TRUE, message=FALSE, warning=FALSE}
+# Create the vectors for meta-clustering dataframe
+name <- c()
+clusterSize <- c()
+Age<- c()
+
+Obesity <- c()
+Smoke <- c()
+Pneumonia <- c()
+Diabetes <- c()
+COPD <- c()
+Asthma <- c()
+INMUSUPR <- c()
+Hypertension <- c()
+Other_Disease <- c()
+Cardiovascular <- c()
+CKD <- c()
+Gender <- c()
+Pregnant <- c()
+Recovery <- c()
+Survival_days <- c()
+LessFifteenSurvival <- c()
+LessThirtySurvival <- c()
+Symptoms_to_hospitalization_days <- c()
+Hospitalized <- c()
+ICU <- c()
+Intubated <- c()
+Other_case_contact <- c()
+Age_mean <- c()
+
+### Obtain the individuals' belonging age-gender specific clusutersubgroup and meta-subgroup
+clusterSubgroup <- c()
+metaSubgroup <- c()
+```
+
+
+## Establish the proper K for each age-gender clustering
+Based on our study, combining Silhouette coefficient and supervised expert assessment. You may consider to change the number `k` for your own analysis by the following chunks. In this tutorial we select different number of k for different age-gender groups.
+
+ages >64 years:
+```{r age65, eval=TRUE, message=FALSE, warning=FALSE}
+Bestk = list()
+Bestk[['>64']] = list()
+Bestk[[">64"]][["Male"]] = 8
+Bestk[[">64"]][["Female"]] = 8
+```
+
+ages between 50-64 years:
+```{r age5064, eval=TRUE, message=FALSE, warning=FALSE}
+Bestk[['50-64']] = list()
+Bestk[['50-64']][["Male"]] = 9
+Bestk[['50-64']][["Female"]] = 8
+```
+
+ages between 18-49 years:
+```{r age1849, eval=TRUE, message=FALSE, warning=FALSE}
+Bestk[["18-49"]] = list()
+Bestk[["18-49"]][["Male"]] = 7
+Bestk[["18-49"]][["Female"]] = 7
+```
+
+ages < 18 years:
+```{r age18, eval=TRUE, message=FALSE, warning=FALSE}
+Bestk[["<18"]] = list()
+Bestk[["<18"]][["Male"]] = 5
+Bestk[["<18"]][["Female"]] = 4
+```
+
+Create List for the Silhouette values in all age-gender groups (not used in this tutorial) since we only used them to illustrate Silhouette Plot in our [COVID-19 Subgroup Discovery and Exploration Tool (COVID-19 SDE Tool)](http://covid19sdetool.upv.es/)
+```{r BestK, eval=TRUE, message=FALSE, warning=FALSE}
+SilhoutteL = list()
+SilhoutteL[[">64"]] = list()
+SilhoutteL[["50-64"]] = list()
+SilhoutteL[["18-49"]] = list()
+SilhoutteL[["<18"]] = list()
+```
+
+## Estimate age-gender specific clusters
+
+This may take a long time depending on the sample size. Our dataset (n = 778 692) lasted roughly 3 hours 
+```{r age_gender_clusters, eval=TRUE, message=FALSE, warning=FALSE, fig.show = 'hide'}
+### Order the data by ageCat and SEX with the purpose of fulling the vector clusterSubgroup in order.
+### The primary order will be <18, >64, 18-49, 50-64
+### The secondary order will be Female and Male
+
+data <- data[
+  with(data, order(ageCat, SEX)),
+]
+
+### create two vectors in the order that we need
+Genders <- c("Female", "Male") 
+Age_cat <- c("<18", ">64", "18-49", "50-64")
+
+
+for (ageRange in Age_cat){
+  for (sex in Genders) {
+    if(sex=='Male') {
+        sex_abbre = 'M'
+      } else {
+        sex_abbre = 'F'
+      }
+    
+    ### Prepare data for analysis, joining habits and comorbidities in a single data.frame and selecting a set of metadata to complement results.
+    dataExperiment = data_outcome[data_outcome$ageCat == ageRange,]
+    dataExperiment = dataExperiment[dataExperiment$SEX == sex,]
+    bestk = Bestk[[ageRange]][[sex]]
+    # print(ageRange)
+    # print(sex)
+    
+    # vector for chronic diseases
+    chronicsVector = dataExperiment %>% select(13, 19,20,21,22,23,24, 25, 27)
+    # vector for patient's features
+    featuresVector = dataExperiment %>% select(26,28)
+    
+    featuresVector = data.frame(featuresVector)
+    colnames(featuresVector) = paste0("F_",colnames(featuresVector))
+    
+    chronicsVector = data.frame(chronicsVector)
+    colnames(chronicsVector) = paste0("C_",colnames(chronicsVector))
+    
+    data_analysis = cbind(featuresVector,chronicsVector)
+    data_analysis = sapply(data_analysis, as.logical)
+    
+    
+    ### Select the variables that we sought to analyze
+    data_analysis_metadata = dataExperiment[,c("ageNum", "ageCat", "SEX", "ENTITY_RES","NATIONALITY","SMOKE", "SECTOR","PREGNANT","OUTCOME","ICU","INTUBATED","SECTOR","OBESITY","OTHER_CASE_CONTACT","Survival_days","PATIENT_TYPE","FromSymptomToHospital_days","Age<18","Age18-49","Age50-64","Age>64",'Survival<15days','Survival<30days')]
+    
+
+    ### Perform Multiple Correspondence Analysis on 3 dimensions
+    res.mca = MCA(data_analysis, ncp = 3, graph = TRUE)
+    # fviz_screeplot(res.mca, addlabels = TRUE, ylim = c(0, 45))
+    ind = res.mca$ind
+    var = res.mca$var
+    
+    ### Perform clustering
+    clusterdistEuclideanMCA <- hclust.vector(ind$coord, method="ward", members=NULL, metric='euclidean', p=NULL) 
+    groups <- cutree(clusterdistEuclideanMCA, k=bestk)
+    sizes <- dataExperiment$ageNum
+    resultsClustering = list("ind" = ind, "clusterdistEuclideanMCA" = clusterdistEuclideanMCA, "k" = bestk, "groups" = groups, "sizes" = sizes)
+    
+    ### Save the belonging subgroup for MSV plot
+    aux <- resultsClustering$groups
+    for (i in 1:length(aux)) {aux[i] <- glue("{ageRange}{sex_abbre}{resultsClustering$groups[i]}")}
+    clusterSubgroup <- append(clusterSubgroup, aux)
+    
+    ### Calculate Silhouette Coefficients for each age-gender cluster
+    Silhouette <- intCriteria(ind$coord, resultsClustering$groups, c("Silhouette"))
+    SilhoutteL[[ageRange]][[sex]] = Silhouette
+    
+    ### selection of true habits and comorbidities values from MCA
+    res.mca$call$marge.col
+    trues = endsWith(names(res.mca$call$marge.col), "TRUE")
+    coord_T = var$coord[trues,]
+    rownames(coord_T) = substr(rownames(coord_T),1,nchar(rownames(coord_T))-5)
+    coord_T_F = coord_T[1:ncol(featuresVector),]
+    rownames(coord_T_F) = substr(rownames(coord_T_F),3,nchar(rownames(coord_T_F)))
+    coord_T_C = coord_T[-(1:ncol(featuresVector)),]
+    rownames(coord_T_C) = substr(rownames(coord_T_C),3,nchar(rownames(coord_T_C)))
+    
+    ### Calculate statistics
+    uniqueGroups = unique(resultsClustering$groups)
+    # change a bit the colnames' format (optional)
+    colnames(data_analysis) = substr(colnames(data_analysis),3,nchar(colnames(data_analysis)))
+    colnames(data_analysis) = make.names(colnames(data_analysis), unique = TRUE)
+    colnames(data_analysis) = str_replace_all(colnames(data_analysis),"_", " ")
+    
+    for (i in 1:length(uniqueGroups)){
+      
+      name <- append(name, paste(ageRange, sex_abbre,i, sep="")) # The name of the cluster. I.e: '18-49M7'
+      
+      patientGroupIdx = resultsClustering$groups %in% uniqueGroups[i]
+      nPatientsGroup = sum(patientGroupIdx)
+      clusterSize <- append(clusterSize, nPatientsGroup) # The 'n' of the cluster
+      
+      # comorbidity statistics
+      data_analysis_subgroup = data_analysis[patientGroupIdx,,drop = FALSE]
+      nind = nrow(data_analysis_subgroup)
+      data_analysis_subgroupT = t(data_analysis_subgroup)
+      resultsS = sapply(data.frame(data_analysis_subgroup), function(x) Prop(x)*100) ### The proportion results of input variables
+      Obesity <- append(Obesity, resultsS[1])
+      Smoke <- append(Smoke, resultsS[2])
+      Pneumonia <- append(Pneumonia, resultsS[3])
+      Diabetes <- append(Diabetes, resultsS[4])
+      COPD <- append(COPD, resultsS[5])
+      Asthma <- append(Asthma, resultsS[6])
+      INMUSUPR <- append(INMUSUPR, resultsS[7])
+      Hypertension <- append(Hypertension, resultsS[8])
+      Other_Disease <- append(Other_Disease, resultsS[9])
+      Cardiovascular <- append(Cardiovascular, resultsS[10])
+      CKD <- append(CKD, resultsS[11])
+      Age<- append(Age, ageRange)
+      
+      # sex, age, recovered statistics
+      data_analysis_metadata_subgroup = data_analysis_metadata[patientGroupIdx,]
+      
+      
+      # Age range statistics
+      Age17Stats = Prop(data_analysis_metadata_subgroup$'Age<18' == 1)*100
+      Age18Stats = Prop(data_analysis_metadata_subgroup$'Age18-49' == 1)*100
+      Age50Stats = Prop(data_analysis_metadata_subgroup$'Age50-64' == 1)*100
+      Age65Stats = Prop(data_analysis_metadata_subgroup$'Age>64' == 1)*100
+      
+      # Gender and pregnancy statistics
+      femaleStats = Prop(as.character(data_analysis_metadata_subgroup$SEX) %in% 'Female')*100
+      PregnantStats = Prop(data_analysis_metadata_subgroup$PREGNANT == 1)*100
+   
+      # ageMean = mean(data_analysis_metadata_subgroup$ageNum)
+      ageStats = Mean(data_analysis_metadata_subgroup$ageNum)
+      
+      # Outcome statistics
+      recoveredStats = Prop(data_analysis_metadata_subgroup$OUTCOME == 'Non-Deceased')*100
+      survivalStats = Mean(data_analysis_metadata_subgroup$Survival_days[data_analysis_metadata_subgroup$OUTCOME == 'Deceased'], na.rm = TRUE)
+      Survival15Stats = Prop(data_analysis_metadata_subgroup$'Survival<15days' == 1)*100/(length(data_analysis_metadata_subgroup$OUTCOME[data_analysis_metadata_subgroup$OUTCOME == "Deceased"])/nrow(data_analysis_metadata_subgroup))
+      Survival30Stats = Prop(data_analysis_metadata_subgroup$'Survival<30days' == 1)*100/(length(data_analysis_metadata_subgroup$OUTCOME[data_analysis_metadata_subgroup$OUTCOME == "Deceased"])/nrow(data_analysis_metadata_subgroup))
+      
+      SympToHostStats = Mean(data_analysis_metadata_subgroup$FromSymptomToHospital_days, na.rm = TRUE)
+      ICUStats = Prop(data_analysis_metadata_subgroup$ICU == 1)*100
+      intubStats = Prop(data_analysis_metadata_subgroup$INTUBATED == 1)*100
+      Patient_TypeStats = Prop(data_analysis_metadata_subgroup$PATIENT_TYPE == 'HOSPITALIZED')*100
+      Case_ContactStats = Prop(data_analysis_metadata_subgroup$OTHER_CASE_CONTACT == 1)*100
+      
+      ### Append the Statistics to vectors
+      Pregnant <- append(Pregnant, PregnantStats)
+      Age_mean <- append(Age_mean, ageStats)
+      Recovery <- append(Recovery, recoveredStats)
+      Survival_days <- append(Survival_days, survivalStats)
+      LessFifteenSurvival <- append(LessFifteenSurvival, Survival15Stats)
+      LessThirtySurvival <- append(LessThirtySurvival, Survival30Stats)
+      Symptoms_to_hospitalization_days <- append(Symptoms_to_hospitalization_days, SympToHostStats)
+      Hospitalized <- append(Hospitalized, Patient_TypeStats)
+      ICU <- append(ICU, ICUStats)
+      Intubated <- append(Intubated, intubStats)
+      Other_case_contact <- append(Other_case_contact, Case_ContactStats)
+      Gender <- append(Gender, sex)
+    }
+  }
+}
+
+# Specify the age-gender subgroups that each patient belongs
+data$clusterSubgroup <- clusterSubgroup
+```
+
+
+List of meta-clusters subgroup distributions (based on the previous chunk's output):
+
+1: '<18M1', '<18F2', '18-49M1', '18-49F1', '50-64M3', '50-64F1', '>64M4', '>64F3'
+2: '<18M2', '<18M3', '<18F1', '<18F4', '18-49M7', '18-49F4'
+3: '<18M4', '18-49M5','18-49M6', '18-49F2', '18-49F3', '50-64M4', '50-64F2', '50-64F8'
+4: '<18M5','<18F3', '18-49M3', '18-49F5', '50-64M1', '50-64F6', '>64M1', '>64F1'
+5: '18-49M2', '18-49F6', '50-64M5'
+6: '18-49M4', '18-49F7', '50-64M2', '50-64M7', '50-64F5', '>64M3', '>64F2'
+7: '50-64M6', '50-64F7', '>64M7', '>64F8'
+8: '50-64M8','>64M6', '>64F6'
+9: '50-64M9', '50-64F3','>64M2', '>64F4', '>64F7'
+10: '50-64F4', '>64M8', '>64F5', '>64M5'
+11: '>64M5'
+
+
+## Establish the metacluster that each patient belongs
+```{r meta_belonging, eval=TRUE, message=FALSE, warning=FALSE}
+load("C:/Ciencias de datos/Research_COVID19_Population/Web Shiny/covid19sdetool_generator/R/COVID19_MEXICO_LATEST_DATA_WithSubgroup.Rdata")
+
+MC1 <- c('<18M1', '<18F2', '18-49M1', '18-49F1', '50-64M3', '50-64F1', '>64M4', '>64F3')
+MC2 <- c('<18M2', '<18M3', '<18F1', '<18F4', '18-49M7', '18-49F4')
+MC3 <- c('<18M4', '18-49M5','18-49M6', '18-49F2', '18-49F3', '50-64M4', '50-64F2', '50-64F8')
+MC4 <- c('<18M5','<18F3', '18-49M3', '18-49F5', '50-64M1', '50-64F6', '>64M1', '>64F1')
+MC5 <- c('18-49M2', '18-49F6', '50-64M5')
+MC6 <- c('18-49M4', '18-49F7', '50-64M2', '50-64M7', '50-64F5', '>64M3', '>64F2')
+MC7 <- c('50-64M6', '50-64F7', '>64M7', '>64F8')
+MC8 <- c('50-64M8','>64M6', '>64F6')
+MC9 <- c('50-64M9', '50-64F3','>64M2', '>64F4', '>64F7')
+MC10 <- c('50-64F4', '>64M8', '>64F5', '>64M5')
+MC11 <- c('>64M5')
+
+MetaClusterSubgroup = list()
+MetaClusterSubgroup[[MC1[1]]] = 1
+MetaClusterSubgroup[[MC1[2]]] = 1
+MetaClusterSubgroup[[MC1[3]]] = 1
+MetaClusterSubgroup[[MC1[4]]] = 1
+MetaClusterSubgroup[[MC1[5]]] = 1
+MetaClusterSubgroup[[MC1[6]]] = 1
+MetaClusterSubgroup[[MC1[7]]] = 1
+MetaClusterSubgroup[[MC1[8]]] = 1
+MetaClusterSubgroup[[MC2[1]]] = 2
+MetaClusterSubgroup[[MC2[2]]] = 2
+MetaClusterSubgroup[[MC2[3]]] = 2
+MetaClusterSubgroup[[MC2[4]]] = 2
+MetaClusterSubgroup[[MC2[5]]] = 2
+MetaClusterSubgroup[[MC2[6]]] = 2
+MetaClusterSubgroup[[MC3[1]]] = 3
+MetaClusterSubgroup[[MC3[2]]] = 3
+MetaClusterSubgroup[[MC3[3]]] = 3
+MetaClusterSubgroup[[MC3[4]]] = 3
+MetaClusterSubgroup[[MC3[5]]] = 3
+MetaClusterSubgroup[[MC3[6]]] = 3
+MetaClusterSubgroup[[MC3[7]]] = 3
+MetaClusterSubgroup[[MC3[8]]] = 3
+MetaClusterSubgroup[[MC4[1]]] = 4
+MetaClusterSubgroup[[MC4[2]]] = 4
+MetaClusterSubgroup[[MC4[3]]] = 4
+MetaClusterSubgroup[[MC4[4]]] = 4
+MetaClusterSubgroup[[MC4[5]]] = 4
+MetaClusterSubgroup[[MC4[6]]] = 4
+MetaClusterSubgroup[[MC4[7]]] = 4
+MetaClusterSubgroup[[MC4[8]]] = 4
+MetaClusterSubgroup[[MC5[1]]] = 5
+MetaClusterSubgroup[[MC5[2]]] = 5
+MetaClusterSubgroup[[MC5[3]]] = 5
+MetaClusterSubgroup[[MC6[1]]] = 6
+MetaClusterSubgroup[[MC6[2]]] = 6
+MetaClusterSubgroup[[MC6[3]]] = 6
+MetaClusterSubgroup[[MC6[4]]] = 6
+MetaClusterSubgroup[[MC6[5]]] = 6
+MetaClusterSubgroup[[MC6[6]]] = 6
+MetaClusterSubgroup[[MC6[7]]] = 6
+MetaClusterSubgroup[[MC7[1]]] = 7
+MetaClusterSubgroup[[MC7[2]]] = 7
+MetaClusterSubgroup[[MC7[3]]] = 7
+MetaClusterSubgroup[[MC7[4]]] = 7
+MetaClusterSubgroup[[MC8[1]]] = 8
+MetaClusterSubgroup[[MC8[2]]] = 8
+MetaClusterSubgroup[[MC8[3]]] = 8
+MetaClusterSubgroup[[MC9[1]]] = 9
+MetaClusterSubgroup[[MC9[2]]] = 9
+MetaClusterSubgroup[[MC9[3]]] = 9
+MetaClusterSubgroup[[MC9[4]]] = 9
+MetaClusterSubgroup[[MC9[5]]] = 9
+MetaClusterSubgroup[[MC10[1]]] = 10
+MetaClusterSubgroup[[MC10[2]]] = 10
+MetaClusterSubgroup[[MC10[3]]] = 10
+MetaClusterSubgroup[[MC10[4]]] = 10
+MetaClusterSubgroup[[MC11[1]]] = 11
+
+clusterSubgroup <- data$clusterSubgroup
+metaSubgroup <- c()
+for (i in 1:length(clusterSubgroup)){
+  metaSubgroup[i] <- glue('MetaSubgroup {MetaClusterSubgroup[[clusterSubgroup[i]]]}')
+}
+
+data$metaSubgroup <- metaSubgroup
+```
+
+# Estimate source variability
+## Variability in type of clinical institution (SECTOR) among the 56 age-gender groups
+
+```{r SECTOR_56, eval=TRUE, message=FALSE, warning=FALSE, fig.dim = c(12, 9)}
+######################################################
+# Evaluate the MSV plot regarding source variability #
+######################################################
+data.experiment <- data
+colName = 'clusterSubgroup'         # Choose the variable that we want to study
+ID_SOURCE = data.experiment$SECTOR  # Choose the source variable to evaluate source variability
+probabilities = by(data.experiment[[colName]], ID_SOURCE, function(x) prop.table(table(x)))  # Calculate histograms and normalize as probabilities for all different sources altogether 
+probMatrix = matrix(unlist(probabilities), ncol = length(probabilities), byrow = FALSE) # unlist the list into a matrix
+
+# Calculate msv metrics
+msvMetrics = estimateMSVmetrics(probMatrix)
+idSource = unique(ID_SOURCE)
+nBySource = table(ID_SOURCE)
+plotMSV(msvMetrics, nBySource, idSource) # Plot the source variability. The color indicates the outlyingess 
+
+######################################################################
+# Obtain the heatmap based on the output of "probabilities" variable #
+######################################################################
+heatDf<- data.frame()
+
+age_gender_groups <- c("<18F1","<18F2","<18F3","<18F4",
+                      "<18M1","<18M2","<18M3","<18M4","<18M5",
+                      "18-49F1","18-49F2","18-49F3","18-49F4","18-49F5","18-49F6","18-49F7",
+                      "18-49M1","18-49M2","18-49M3","18-49M4","18-49M5","18-49M6","18-49M7",
+                      "50-64F1","50-64F2","50-64F3","50-64F4","50-64F5","50-64F6","50-64F7","50-64F8",
+                      "50-64M1","50-64M2","50-64M3","50-64M4","50-64M5","50-64M6","50-64M7","50-64M8","50-64M9",
+                      ">64F1",">64F2",">64F3",">64F4",">64F5",">64F6",">64F7",">64F8",
+                      ">64M1",">64M2",">64M3",">64M4",">64M5",">64M6",">64M7",">64M8")
+
+institutions <- c("DIF", "IMSS", "IMSS-BIENESTAR", "ISSSTE", "MUNICIPAL", 
+    "PEMEX", "PRIVATE", "RED CROSS", "SEDENA", "SEMAR", "SSA", 
+    "STATE", "UNIVERSITARY")
+
+# Obtain the dataframe including the p (cluster/institution). If a cluster is not in matrix "probabilities" we write 0.
+for (institution in institutions) 
+  {
+  data_aux <- probabilities[[institution]]
+  aux_vec <- c()
+  for (cluster in age_gender_groups)
+    {
+    if (cluster %in% names(data_aux))
+      {
+       Value <- data_aux[[cluster]]
+    }
+    else
+      {
+      Value <- 0
+    }
+    aux_vec <- append(aux_vec, Value)
+  }
+  heatDf <- rbind(heatDf, aux_vec)
+}
+
+colnames(heatDf) <-  age_gender_groups  # Specify which age-gender specific cluster belongs each row
+rownames(heatDf) <- institutions # to figure it out the order of the colnames
+
+heatDf <- t(heatDf)   # Interchange the row and columns
+
+breaksList = c(0, 0.0005, 0.001, 0.003, 0.006, 0.01, 0.03, 0.05, 0.1, 0.15, 0.20, 0.25, 0.30, 0.35) # Specify the interval of levels for legend
+color = viridis(length(breaksList)+1)[4:length(breaksList)+1]
+color <- append(color, c("#FFb700", "#e67e00"))
+
+### For the following pheatmap function, it is worth noting that we did not use "display_numbers = T" parameter to illustrate the exact figure of each box since the heatmap is too small which made it impossible to visualize. When user uses this tutorial we recommend to include this parameter if the user wants to generate the heatmap with numbers so that the difference between states and type of clinical institution could be assessed more properly.
+HT1a <- pheatmap(heatDf, name='The remain variables', main='Institutions probability among 56 age-gender specific clusters', angle_col = c('315'), cluster_cols=T, cluster_rows = F, breaks=breaksList, color=color)
+HT1a
+```
+
+## Variability in type of clinical institution (SECTOR) among the 11 meta-clusters
+```{r SECTOR_Meta, eval=TRUE, message=FALSE, warning=FALSE, fig.dim = c(12, 9)}
+######################################################
+# Evaluate the MSV plot regarding source variability #
+######################################################
+
+data.experiment <- data
+colName = 'metaSubgroup'         # Choose the variable that we want to study
+ID_SOURCE = data.experiment$SECTOR  # Choose the source variable to evaluate source variability
+probabilities = by(data.experiment[[colName]], ID_SOURCE, function(x) prop.table(table(x)))  # Calculate histograms and normalize as probabilities for all different sources altogether 
+probMatrix = matrix(unlist(probabilities), ncol = length(probabilities), byrow = FALSE) # unlist the list into a matrix
+
+# Calculate msv metrics
+msvMetrics = estimateMSVmetrics(probMatrix)
+idSource = unique(ID_SOURCE)
+nBySource = table(ID_SOURCE)
+plotMSV(msvMetrics, nBySource, idSource) # Plot the source variability. The color indicates the outlyingess 
+
+#####################################################################
+# Obtain the heatmap based on the output of "probabilities" variable
+#####################################################################
+heatDf<- data.frame()
+
+meta_groups <- c('MetaSubgroup 1', 'MetaSubgroup 2', 'MetaSubgroup 3', 'MetaSubgroup 4','MetaSubgroup 5','MetaSubgroup 6','MetaSubgroup 7','MetaSubgroup 8','MetaSubgroup 9','MetaSubgroup 10','MetaSubgroup 11') 
+
+
+# Obtain the dataframe including the p (cluster/institution). If a cluster is not in matrix "probabilities" we write 0.
+for (institution in institutions) 
+  {
+  data_aux <- probabilities[[institution]]
+  aux_vec <- c()
+  for (cluster in meta_groups)
+    {
+    if (cluster %in% names(data_aux))
+      {
+       Value <- data_aux[[cluster]]
+    }
+    else
+      {
+      Value <- 0
+    }
+    aux_vec <- append(aux_vec, Value)
+  }
+  heatDf <- rbind(heatDf, aux_vec)
+}
+
+colnames(heatDf) <-  meta_groups  # Specify which age-gender specific cluster belongs each row
+rownames(heatDf) <- institutions # to figure it out the order of the colnames
+
+heatDf <- t(heatDf)   # Interchange the row and columns
+
+breaksList = c(0,  0.003, 0.006, 0.01, 0.02, 0.03, 0.05, 0.1, 0.15, 0.20, 0.30, 0.4, 0.5, 0.6, 0.7)
+color = viridis(length(breaksList)+1)[4:length(breaksList)+1]
+color <- append(color, c("#FFb700", "#e67e00"))
+
+### For the following pheatmap function, it is worth noting that we did not use "display_numbers = T" parameter to illustrate the exact figure of each box since the heatmap is too small which made it impossible to visualize. When user uses this tutorial we recommend to include this parameter if the user wants to generate the heatmap with numbers so that the difference between states and type of clinical institution could be assessed more properly.
+HT1b <- pheatmap(heatDf, name='The remain variables',main='Institutions probability among 56 age-gender specific clusters', angle_col = c('315'), cluster_cols=T, cluster_rows = F, breaks=breaksList, color=color)
+HT1b
+```
+
+## Variability in State's (ENTITY_UM) among the 56 age-gender groups
+```{r State_56, eval=TRUE, message=FALSE, warning=FALSE, fig.dim = c(12, 9)}
+######################################################
+# Evaluate the MSV plot regarding source variability #
+######################################################
+data.experiment <- data
+colName = 'clusterSubgroup'         # Choose the variable that we want to study
+ID_SOURCE = data.experiment$ENTITY_UM # Choose the source variable to evaluate source variability
+probabilities = by(data.experiment[[colName]], ID_SOURCE, function(x) prop.table(table(x)))  # Calculate histograms and normalize as probabilities for all different sources altogether 
+probMatrix = matrix(unlist(probabilities), ncol = length(probabilities), byrow = FALSE) # unlist the list into a matrix
+
+# Calculate msv metrics
+msvMetrics = estimateMSVmetrics(probMatrix)
+idSource = unique(ID_SOURCE)
+nBySource = table(ID_SOURCE)
+plotMSV(msvMetrics, nBySource, idSource) # Plot the source variability. The color indicates the outlyingess 
+
+#####################################################################
+# Obtain the heatmap based on the output of "probabilities" variable
+#####################################################################
+heatDf<- data.frame()
+
+age_gender_groups <- c("<18F1","<18F2","<18F3","<18F4",
+                      "<18M1","<18M2","<18M3","<18M4","<18M5",
+                      "18-49F1","18-49F2","18-49F3","18-49F4","18-49F5","18-49F6","18-49F7",
+                      "18-49M1","18-49M2","18-49M3","18-49M4","18-49M5","18-49M6","18-49M7",
+                      "50-64F1","50-64F2","50-64F3","50-64F4","50-64F5","50-64F6","50-64F7","50-64F8",
+                      "50-64M1","50-64M2","50-64M3","50-64M4","50-64M5","50-64M6","50-64M7","50-64M8","50-64M9",
+                      ">64F1",">64F2",">64F3",">64F4",">64F5",">64F6",">64F7",">64F8",
+                      ">64M1",">64M2",">64M3",">64M4",">64M5",">64M6",">64M7",">64M8")
+
+states <- c("AGUASCALIENTES", "BAJA CALIFORNIA", "BAJA CALIFORNIA SUR", 
+    "CAMPECHE", "CHIAPAS", "CHIHUAHUA", "COAHUILA DE ZARAGOZA", 
+    "COLIMA", "DURANGO", "GUANAJUATO", "GUERRERO", "HIDALGO", 
+    "JALISCO", "MEXICO CITY", "MICHOACÁN DE OCAMPO", "MORELOS", 
+    "NAYARIT", "NUEVO LEÓN", "OAXACA", "PUEBLA", "QUERÉTARO", 
+    "QUINTANA ROO", "SAN LUIS POTOSÍ", "SINALOA", "SONORA", "STATE OF MEXICO", 
+    "TABASCO", "TAMAULIPAS", "TLAXCALA", "VERACRUZ", "YUCATÁN", 
+    "ZACATECAS")
+
+# Obtain the dataframe including the p (cluster/institution). If a cluster is not in matrix "probabilities" we write 0.
+for (state in states) 
+  {
+  data_aux <- probabilities[[state]]
+  aux_vec <- c()
+  for (cluster in age_gender_groups)
+    {
+    if (cluster %in% names(data_aux))
+      {
+       Value <- data_aux[[cluster]]
+    }
+    else
+      {
+      Value <- 0
+    }
+    aux_vec <- append(aux_vec, Value)
+  }
+  heatDf <- rbind(heatDf, aux_vec)
+}
+
+colnames(heatDf) <-  age_gender_groups  # Specify which age-gender specific cluster belongs each row
+rownames(heatDf) <- states # to figure it out the order of the colnames
+
+heatDf <- t(heatDf)   # Interchange the row and columns
+
+breaksList = c(0, 0.0005, 0.001, 0.003, 0.006, 0.01, 0.03, 0.05, 0.075, 0.1, 0.15, 0.20, 0.25, 0.3) # Specify the interval of levels for legend
+color = viridis(length(breaksList)+1)[4:length(breaksList)+1]
+color <- append(color, c("#FFb700", "#e67e00"))
+
+### For the following pheatmap function, it is worth noting that we did not use "display_numbers = T" parameter to illustrate the exact figure of each box since the heatmap is too small which made it impossible to visualize. When user uses this tutorial we recommend to include this parameter if the user wants to generate the heatmap with numbers so that the difference between states and type of clinical institution could be assessed more properly.
+HT2a <- pheatmap(heatDf, name='The remain variables', main='States probability among 56 age-gender specific clusters', angle_col = c('315'), cluster_cols=T, cluster_rows = F, breaks=breaksList, color=color)
+HT2a
+```
+
+## Variability in State's (ENTITY_UM) among the 11 meta-clusters
+```{r State_Meta, eval=TRUE, message=FALSE, warning=FALSE, fig.dim = c(12, 9)}
+######################################################
+# Evaluate the MSV plot regarding source variability #
+######################################################
+data.experiment <- data
+colName = 'metaSubgroup'         # Choose the variable that we want to study
+ID_SOURCE = data.experiment$ENTITY_UM # Choose the source variable to evaluate source variability
+probabilities = by(data.experiment[[colName]], ID_SOURCE, function(x) prop.table(table(x)))  # Calculate histograms and normalize as probabilities for all different sources altogether 
+probMatrix = matrix(unlist(probabilities), ncol = length(probabilities), byrow = FALSE) # unlist the list into a matrix
+
+# Calculate msv metrics
+msvMetrics = estimateMSVmetrics(probMatrix)
+idSource = unique(ID_SOURCE)
+nBySource = table(ID_SOURCE)
+plotMSV(msvMetrics, nBySource, idSource) # Plot the source variability. The color indicates the outlyingness 
+
+#####################################################################
+# Obtain the heatmap based on the output of "probabilities" variable
+#####################################################################
+heatDf<- data.frame()
+
+meta_groups <- c('MetaSubgroup 1', 'MetaSubgroup 2', 'MetaSubgroup 3', 'MetaSubgroup 4','MetaSubgroup 5','MetaSubgroup 6','MetaSubgroup 7','MetaSubgroup 8','MetaSubgroup 9','MetaSubgroup 10','MetaSubgroup 11') 
+
+states <- c("AGUASCALIENTES", "BAJA CALIFORNIA", "BAJA CALIFORNIA SUR", 
+    "CAMPECHE", "CHIAPAS", "CHIHUAHUA", "COAHUILA DE ZARAGOZA", 
+    "COLIMA", "DURANGO", "GUANAJUATO", "GUERRERO", "HIDALGO", 
+    "JALISCO", "MEXICO CITY", "MICHOACÁN DE OCAMPO", "MORELOS", 
+    "NAYARIT", "NUEVO LEÓN", "OAXACA", "PUEBLA", "QUERÉTARO", 
+    "QUINTANA ROO", "SAN LUIS POTOSÍ", "SINALOA", "SONORA", "STATE OF MEXICO", 
+    "TABASCO", "TAMAULIPAS", "TLAXCALA", "VERACRUZ", "YUCATÁN", 
+    "ZACATECAS")
+
+# Obtain the dataframe including the p (cluster/institution). If a cluster is not in matrix "probabilities" we write 0.
+for (state in states) 
+  {
+  data_aux <- probabilities[[state]]
+  aux_vec <- c()
+  for (cluster in meta_groups)
+    {
+    if (cluster %in% names(data_aux))
+      {
+       Value <- data_aux[[cluster]]
+    }
+    else
+      {
+      Value <- 0
+    }
+    aux_vec <- append(aux_vec, Value)
+  }
+  heatDf <- rbind(heatDf, aux_vec)
+}
+
+colnames(heatDf) <-  meta_groups  # Specify which age-gender specific cluster belongs each row
+rownames(heatDf) <- states # to figure it out the order of the colnames
+
+heatDf <- t(heatDf)   # Interchange the row and columns
+
+breaksList = c(0,  0.003, 0.006, 0.01, 0.02, 0.03, 0.05, 0.1, 0.15, 0.20, 0.30, 0.4, 0.5, 0.6, 0.7) # Specify the interval of levels for legend
+color = viridis(length(breaksList)+1)[4:length(breaksList)+1]
+color <- append(color, c("#FFb700", "#e67e00"))
+
+### For the following pheatmap function, it is worth noting that we did not use "display_numbers = T" parameter to illustrate the exact figure of each box since the heatmap is too small which made it impossible to visualize. When user uses this tutorial we recommend to include this parameter if the user wants to generate the heatmap with numbers so that the difference between states and type of clinical institution could be assessed more properly.
+HT2b <- pheatmap(heatDf, name='The remain variables', display_numbers = F,main='States probability among 56 age-gender specific clusters', angle_col = c('315'), cluster_cols=T, cluster_rows = F, breaks=breaksList, color=color)
+HT2b
+```
+
