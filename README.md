@@ -1,5 +1,5 @@
 # COVID19-metaclustering
-Pipelines to describe COVID-19 subphenotypes regarding severity patterns including prognostic, ICU and morbimortality outcomes, from inter-patient variability patterns in clinical phenotypes and demographic features, and through stratification based on gender and age groups. The pipelines can be applied to distinct datasets.
+Pipelines to describe COVID-19 subphenotypes regarding severity patterns through a two-stage clustering approach. First, sets of clusters are obtained from age-gender stratified groups using patient phenotypes and demographic features. Second, the total set of clusters are clustered again according to their aggregated features, leading to a final set of meta-clusters of age-gender unbiased COVID-19 subphenotypes. Additional source and temporal variability assessments are included as part of data quality analyses.
 
 ## Outline
 The COVID-19 infectious disease has led since December 2019 to a global pandemic that remains under control measures. Researchers around the world are making great efforts for a comprehensive understanding of COVID-19 from various data sources and modalities, with the goal of improving prognosis and treatments. 
