@@ -427,7 +427,6 @@ data_analysis_metadata = df
 
 ## Apply PCA analysis for resultant 56 age-gender specific clusters with 2D plot
 ```{r PCA, eval=TRUE, message=FALSE, warning=FALSE}
-
 # vector for comorbidities
 chronicsVector = data_analysis_metadata %>% dplyr::select(4,5,6,7,8,9,10,11,12)
 # vector for habits
@@ -452,6 +451,7 @@ a = fviz_screeplot(pca, addlabels = TRUE, ylim = c(0, 45))
 p <- autoplot(pca, data=data_analysis_metadata, colour="Age",frame=TRUE,loadings = TRUE, loadings.colour = 'blue', label = TRUE, label.size = 5, main='2D PCA from 56 COVID-19 subgroups',
          loadings.label = TRUE, loadings.label.size = 5)+
   theme_bw()
+p
 ```
 
 # Meta-Clustering
@@ -486,15 +486,6 @@ resultsClustering = list("ind" = pca$x[,1:3], "clusterdistEuclideanPCA" = cluste
 
 Perform first some preparation to facilitate visualizations.
 ```{r plotsPrep, eval=TRUE, message=FALSE, warning=FALSE}
-# selection of true symptoms and comorbidities values from MCA
-trues = endsWith(names(res.mca$call$marge.col), "TRUE")
-coord_T = var$coord[trues,]
-rownames(coord_T) = substr(rownames(coord_T),1,nchar(rownames(coord_T))-5)
-coord_T_F = coord_T[1:ncol(featuresVector),]
-rownames(coord_T_F) = substr(rownames(coord_T_F),3,nchar(rownames(coord_T_F)))
-coord_T_C = coord_T[-(1:ncol(featuresVector)),]
-rownames(coord_T_C) = substr(rownames(coord_T_C),3,nchar(rownames(coord_T_C)))
-
 # configuration of scatter properties
 markerSize2d = 35
 markerSize2ddiamond = 25
@@ -612,10 +603,10 @@ for (i in 1:length(uniqueGroups)){
   data_analysis_metadata_subgroup = data_analysis_metadata[patientGroupIdx,]
   
   #Age range stats
-  Age17Stats = pCI(data_analysis_metadata_subgroup$Age == '<=17', alphaci)*100
+  Age17Stats = pCI(data_analysis_metadata_subgroup$Age == '<18', alphaci)*100
   Age18Stats = pCI(data_analysis_metadata_subgroup$Age == '18-49', alphaci)*100
   Age50Stats = pCI(data_analysis_metadata_subgroup$Age == '50-64', alphaci)*100
-  Age65Stats = pCI(data_analysis_metadata_subgroup$Age == '>=65', alphaci)*100
+  Age65Stats = pCI(data_analysis_metadata_subgroup$Age == '>64', alphaci)*100
 
   femaleStats = pCI(data_analysis_metadata_subgroup$Gender=='Female', alphaci)*100
   PregnantStats = mCI(data_analysis_metadata_subgroup$Pregnant, alphaci)
