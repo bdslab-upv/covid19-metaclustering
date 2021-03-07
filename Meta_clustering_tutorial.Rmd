@@ -307,16 +307,6 @@ for (ageRange in Age_cat){
     Silhouette <- intCriteria(ind$coord, resultsClustering$groups, c("Silhouette"))
     SilhoutteL[[ageRange]][[sex]] = Silhouette
     
-    ### selection of true habits and comorbidities values from MCA
-    res.mca$call$marge.col
-    trues = endsWith(names(res.mca$call$marge.col), "TRUE")
-    coord_T = var$coord[trues,]
-    rownames(coord_T) = substr(rownames(coord_T),1,nchar(rownames(coord_T))-5)
-    coord_T_F = coord_T[1:ncol(featuresVector),]
-    rownames(coord_T_F) = substr(rownames(coord_T_F),3,nchar(rownames(coord_T_F)))
-    coord_T_C = coord_T[-(1:ncol(featuresVector)),]
-    rownames(coord_T_C) = substr(rownames(coord_T_C),3,nchar(rownames(coord_T_C)))
-    
     ### Calculate statistics
     uniqueGroups = unique(resultsClustering$groups)
     # change a bit the colnames' format (optional)
@@ -584,7 +574,7 @@ colnames(data_analysis) = make.names(colnames(data_analysis), unique = TRUE)
 colnames(data_analysis) = str_replace_all(colnames(data_analysis),"_", " ")
 
 # Note: this (whihout make.names) returns an error when same text is in symptoms and comorbidities, a solution might be using a column for names, or avoid repated terms
-rownames(resultsTable) <- c(sprintf('No. of individuals (n<sub>total</sub> = %d)',nrow(data_analysis)), colnames(data_analysis),"Age<17","Age18-49","Age50-64","Age>65",'PREGNANT', 'Females','Age','Recovered','Survival days (deceased)','Survival>15days','Survival>30days', 'Survival>15days_deceased','Survival>30days_deceased','Symptoms to hospitalization days','Hospitalized','ICU','INTUBATED','Other case contact')
+rownames(resultsTable) <- c(sprintf('No. of individuals (n<sub>total</sub> = %d)',nrow(data_analysis)), colnames(data_analysis),"Age<18","Age18-49","Age50-64","Age>64",'PREGNANT', 'Females','Age','Recovered','Survival days (deceased)','Survival>15days','Survival>30days', 'Survival>15days_deceased','Survival>30days_deceased','Symptoms to hospitalization days','Hospitalized','ICU','INTUBATED','Other case contact')
 colnames(resultsTable) <- paste('Subgroup',uniqueGroups)
 
 for (i in 1:length(uniqueGroups)){
