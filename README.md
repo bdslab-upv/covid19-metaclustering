@@ -33,7 +33,7 @@ For further exploration of the results, please visit the [Mexico Government resu
 ## Citation
 If you use this code please cite:
 
-<blockquote style='font-size:14px'>Lexin Zhou, Nekane Romero, Juan Martínez-Miranda, J Alberto Conejero, Juan M García-Gómez, Carlos Sáez. Heterogeneity in COVID-19 severity patterns among age-gender groups: an analysis of 778 692 Mexican patients through a meta-clustering technique. Preprint published in medRxiv. https://doi.org/10.1101/2021.02.21.21252132 </blockquote>
+<blockquote style='font-size:14px'>Lexin Zhou, Nekane Romero, Juan Martínez-Miranda, J Alberto Conejero, Juan M García-Gómez, Carlos Sáez. Subphenotyping of COVID-19 patients at pre-admission towards anticipated severity stratification: an analysis of 778 692 Mexican patients through an age-gender unbiased meta-clustering technique. Preprint published in medRxiv. https://doi.org/10.1101/2021.02.21.21252132 </blockquote>
 
 ## Credits
 - **Version**: 1.0.0
